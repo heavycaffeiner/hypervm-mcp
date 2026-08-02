@@ -1,0 +1,10 @@
+# Go source is LF, everywhere, always.
+#
+# Windows runners check out with core.autocrlf=true by default, which rewrites
+# every line ending and makes gofmt report the entire tree as unformatted. This
+# pins the checkout so the working tree matches what gofmt expects.
+* text=auto eol=lf
+
+*.exe   binary
+*.vhdx  binary
+*.iso   binary
