@@ -8,6 +8,7 @@ package mcpsrv
 import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/heavycaffeiner/hypervm-mcp/internal/config"
 	"github.com/heavycaffeiner/hypervm-mcp/internal/creds"
 	"github.com/heavycaffeiner/hypervm-mcp/internal/guest"
 	"github.com/heavycaffeiner/hypervm-mcp/internal/hyperv"
@@ -45,11 +46,21 @@ the guest its own address on the physical LAN, which is the only option when the
 host already holds the port (SMB, RDP, WinRM), when the protocol is sensitive to
 host identity, or when other machines must reach the guest directly.`
 
+// titleSuffix renders the build's instance name for display, empty on a release.
+func titleSuffix() string {
+	if config.Instance() == "" {
+		return ""
+	}
+	return " (" + config.Instance() + ")"
+}
+
 // New returns a server with every tool registered, ready to run over a transport.
 func New(version string, d *Deps) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{
-		Name:        "hypervm-mcp",
-		Title:       "Hyper-V Manager",
+		// Suffixed on a development build so a client connected to both can tell
+		// which one answered.
+		Name:        config.ServiceName(),
+		Title:       "Hyper-V Manager" + titleSuffix(),
 		Description: "Manage Hyper-V virtual machines without per-session privilege elevation.",
 		Version:     version,
 	}, &mcp.ServerOptions{

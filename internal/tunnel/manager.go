@@ -190,7 +190,9 @@ func (m *Manager) Open(ctx context.Context, spec Spec) (*Tunnel, error) {
 	m.mu.Unlock()
 
 	if spec.BindScope != "loopback" {
-		rule := "hypervm-mcp-" + st.spec.ID
+		// Prefixed with the instance name so a development build never removes a
+		// rule the installed service owns.
+		rule := config.ResourcePrefix() + "-" + st.spec.ID
 		if err := m.deps.Firewall.Allow(ctx, rule, port, firewallAddresses(spec.BindScope, hosts)); err != nil {
 			// A missing rule may still work — the host firewall might already
 			// permit the port — so this is reported, not fatal.

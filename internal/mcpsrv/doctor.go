@@ -245,7 +245,7 @@ func registerDoctorTool(s *mcp.Server, d *Deps) {
 			"status":    worst,
 			"checks":    checks,
 			"data_dir":  config.DataDir(),
-			"pipe_path": `\\.\pipe\` + config.DefaultPipeName,
+			"pipe_path": `\\.\pipe\` + config.DefaultPipeName(),
 		}, nil
 	})
 }

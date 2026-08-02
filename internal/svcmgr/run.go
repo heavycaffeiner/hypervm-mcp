@@ -58,7 +58,7 @@ func Run(version string) error {
 	}
 
 	log, logErr := logx.NewFile(config.LogPath(), logx.ParseLevel(cfg.LogLevel))
-	if elog, err := eventlog.Open(config.ServiceName); err == nil {
+	if elog, err := eventlog.Open(config.ServiceName()); err == nil {
 		log.SetSink(elog)
 		defer elog.Close()
 	}
@@ -106,7 +106,7 @@ func Run(version string) error {
 		},
 	}
 
-	return svc.Run(config.ServiceName, p)
+	return svc.Run(config.ServiceName(), p)
 }
 
 // Execute is the SCM control loop.

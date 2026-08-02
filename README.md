@@ -291,6 +291,36 @@ messages, so "VM not found" arrives in Korean on a Korean Windows. Outcomes are
 decided by error *category* and by cmdlet id, both locale-independent, with an
 `en-US` pin so anything reaching the text-matching fallback is English.
 
+## Developing against an installed copy
+
+If you already use hypervm-mcp for real work, you do not want a development build
+restarting that service, reading its credentials, or answering on its pipe. Build
+with an instance name and it takes a separate identity throughout:
+
+```powershell
+go build -ldflags "-X github.com/heavycaffeiner/hypervm-mcp/internal/config.instance=dev" `
+  -o bin\hypervm-mcp-dev.exe .\cmd\hypervm-mcp
+.\bin\hypervm-mcp-dev.exe service install
+```
+
+| | release build | `instance=dev` |
+|---|---|---|
+| Service | `hypervm-mcp` | `hypervm-mcp-dev` |
+| Pipe | `\\.\pipe\hypervm-mcp` | `\\.\pipe\hypervm-mcp-dev` |
+| Data directory | `%ProgramData%\hypervm-mcp` | `%ProgramData%\hypervm-mcp-dev` |
+| Event log source | `hypervm-mcp` | `hypervm-mcp-dev` |
+| Firewall rules and NATs | `hypervm-mcp-*` | `hypervm-mcp-dev-*` |
+| MCP server name | `hypervm-mcp` | `hypervm-mcp-dev` |
+
+Release builds pass no flag, so their names are unchanged. The two services run
+side by side; this repository's `.mcp.json` points at the dev one.
+
+Credentials and pinned host keys do **not** carry over — the dev instance starts
+with an empty store, which is the point.
+
+**Hyper-V itself is not isolated.** Both instances drive the same hypervisor and
+see the same virtual machines. Keeping their VM names apart is still up to you.
+
 ## Tests
 
 ```powershell

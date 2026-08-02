@@ -30,7 +30,9 @@ func (f *Firewall) Allow(ctx context.Context, ruleName string, port int, address
     Remove-NetFirewallRule -Name $P.rule -ErrorAction SilentlyContinue
     $args = @{
         Name        = $P.rule
-        DisplayName = 'hypervm-mcp tunnel ' + $P.rule
+        # The rule name already carries the instance prefix, so it identifies the
+        # owner on its own.
+        DisplayName = 'tunnel ' + $P.rule
         Direction   = 'Inbound'
         Action      = 'Allow'
         Protocol    = 'TCP'

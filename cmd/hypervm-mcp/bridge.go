@@ -17,7 +17,7 @@ import (
 // It holds no MCP state of its own, so it keeps working unchanged as tools are
 // added to the service.
 func cmdBridge(_ []string) int {
-	pipePath := `\\.\pipe\` + config.DefaultPipeName
+	pipePath := `\\.\pipe\` + config.DefaultPipeName()
 	if cfg, err := config.Load(); err == nil {
 		pipePath = cfg.PipePath()
 	}

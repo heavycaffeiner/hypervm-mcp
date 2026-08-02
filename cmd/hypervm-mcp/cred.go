@@ -203,7 +203,7 @@ func cmdTunnelList() int {
 }
 
 func sendControl(req map[string]any) (*ipc.ControlResponse, error) {
-	pipePath := `\\.\pipe\` + config.DefaultPipeName
+	pipePath := `\\.\pipe\` + config.DefaultPipeName()
 	if cfg, err := config.Load(); err == nil {
 		pipePath = cfg.PipePath()
 	}

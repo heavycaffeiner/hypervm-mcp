@@ -197,7 +197,7 @@ func storeCredentials(t *testing.T, privateKey string) {
 // because one was copied from the other.
 func storeCredentialsFor(t *testing.T, vm, privateKey string) {
 	t.Helper()
-	pipePath := `\\.\pipe\` + config.DefaultPipeName
+	pipePath := `\\.\pipe\` + config.DefaultPipeName()
 	if cfg, err := config.Load(); err == nil {
 		pipePath = cfg.PipePath()
 	}

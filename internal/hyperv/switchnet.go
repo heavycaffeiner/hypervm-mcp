@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/heavycaffeiner/hypervm-mcp/internal/config"
 	"github.com/heavycaffeiner/hypervm-mcp/internal/hverr"
 )
 
@@ -68,6 +69,7 @@ func (c *Client) SetSwitchHostAddress(ctx context.Context, switchName, address s
 	var out SwitchNetwork
 	err := c.r.RunTimeoutInto(ctx, 2*time.Minute, script, map[string]any{
 		"switch": switchName, "address": address, "prefix": prefixLength, "remove": remove,
+		"nat_prefix": config.ResourcePrefix(),
 	}, &out)
 	if err != nil {
 		return nil, err
@@ -101,7 +103,7 @@ const switchNetworkProjection = `
     # no reliable way to ask Windows which switch one belongs to. Report the one
     # this server manages for this switch, found by its name.
     $natName = ''; $natPrefix = ''
-    $managed = Get-NetNat -Name ('hypervm-mcp-' + $sw.Name) -ErrorAction SilentlyContinue
+    $managed = Get-NetNat -Name ($P.nat_prefix + '-' + $sw.Name) -ErrorAction SilentlyContinue
     if ($managed) {
         $natName = $managed.Name
         $natPrefix = [string]$managed.InternalIPInterfaceAddressPrefix
@@ -126,7 +128,7 @@ func (c *Client) SetSwitchNAT(ctx context.Context, switchName, natName, prefix s
 		return nil, hverr.New(hverr.InvalidArgument, "switch_name is required")
 	}
 	if natName == "" {
-		natName = "hypervm-mcp-" + switchName
+		natName = config.ResourcePrefix() + "-" + switchName
 	}
 	if enable {
 		p, err := netip.ParsePrefix(prefix)
@@ -169,6 +171,7 @@ func (c *Client) SetSwitchNAT(ctx context.Context, switchName, natName, prefix s
 	var out SwitchNetwork
 	err := c.r.RunTimeoutInto(ctx, 2*time.Minute, script, map[string]any{
 		"switch": switchName, "nat_name": natName, "prefix": prefix, "enable": enable,
+		"nat_prefix": config.ResourcePrefix(),
 	}, &out)
 	if err != nil {
 		return nil, err

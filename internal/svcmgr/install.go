@@ -58,7 +58,7 @@ func Install(allowedSID string) error {
 
 	// Best-effort: the service still logs to a file if event log registration
 	// fails (for example when a stale registration is left over).
-	_ = eventlog.InstallAsEventCreate(config.ServiceName,
+	_ = eventlog.InstallAsEventCreate(config.ServiceName(),
 		eventlog.Error|eventlog.Warning|eventlog.Info)
 
 	m, err := mgr.Connect()
@@ -69,7 +69,7 @@ func Install(allowedSID string) error {
 
 	// Upgrading in place: the running service holds a lock on its own binary, so
 	// it has to stop before the file can be replaced.
-	if s, err := m.OpenService(config.ServiceName); err == nil {
+	if s, err := m.OpenService(config.ServiceName()); err == nil {
 		defer s.Close()
 		if err := stopAndWait(s); err != nil {
 			return err
@@ -87,8 +87,8 @@ func Install(allowedSID string) error {
 		return err
 	}
 
-	s, err := m.CreateService(config.ServiceName, config.BinaryPath(), mgr.Config{
-		DisplayName:      config.ServiceDisplayName,
+	s, err := m.CreateService(config.ServiceName(), config.BinaryPath(), mgr.Config{
+		DisplayName:      config.ServiceDisplayName(),
 		Description:      serviceDescription,
 		StartType:        mgr.StartAutomatic,
 		ServiceStartName: "LocalSystem",
@@ -118,7 +118,7 @@ func Uninstall(purge bool) error {
 	}
 	defer m.Disconnect()
 
-	s, err := m.OpenService(config.ServiceName)
+	s, err := m.OpenService(config.ServiceName())
 	if err == nil {
 		defer s.Close()
 		if err := stopAndWait(s); err != nil {
@@ -129,7 +129,7 @@ func Uninstall(purge bool) error {
 		}
 	}
 
-	_ = eventlog.Remove(config.ServiceName)
+	_ = eventlog.Remove(config.ServiceName())
 
 	if purge {
 		if err := os.RemoveAll(config.DataDir()); err != nil {
@@ -186,14 +186,14 @@ func Status(ctx context.Context) (*StatusInfo, error) {
 		info.AllowedSID = cfg.AllowedSID
 		info.PipePath = cfg.PipePath()
 	} else {
-		info.PipePath = `\\.\pipe\` + config.DefaultPipeName
+		info.PipePath = `\\.\pipe\` + config.DefaultPipeName()
 	}
 
 	// Status must work for the ordinary user this whole design serves, so it
 	// asks the SCM only for query rights rather than mgr.Connect's full access.
 	if m, err := connectQuery(); err == nil {
 		defer m.Disconnect()
-		if s, err := openQuery(m, config.ServiceName); err == nil {
+		if s, err := openQuery(m, config.ServiceName()); err == nil {
 			defer s.Close()
 			info.Installed = true
 			if st, err := s.Query(); err == nil {
@@ -245,10 +245,10 @@ func open() (*mgr.Service, *mgr.Mgr, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("connect to the service control manager: %w", err)
 	}
-	s, err := m.OpenService(config.ServiceName)
+	s, err := m.OpenService(config.ServiceName())
 	if err != nil {
 		m.Disconnect()
-		return nil, nil, fmt.Errorf("%s is not installed: %w", config.ServiceName, err)
+		return nil, nil, fmt.Errorf("%s is not installed: %w", config.ServiceName(), err)
 	}
 	return s, m, nil
 }
@@ -300,7 +300,7 @@ func updateExisting(s *mgr.Service) error {
 	c.StartType = mgr.StartAutomatic
 	c.ServiceStartName = "LocalSystem"
 	c.Dependencies = []string{vmmsDependency}
-	c.DisplayName = config.ServiceDisplayName
+	c.DisplayName = config.ServiceDisplayName()
 	c.Description = serviceDescription
 	if err := s.UpdateConfig(c); err != nil {
 		return fmt.Errorf("update the service configuration: %w", err)

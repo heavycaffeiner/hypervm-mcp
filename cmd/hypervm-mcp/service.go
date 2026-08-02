@@ -223,12 +223,13 @@ Add this to a workspace's .mcp.json to use it:
 
   {
     "mcpServers": {
-      "hypervm-mcp": { "command": %q, "args": ["bridge"] }
+      %q: { "command": %q, "args": ["bridge"] }
     }
   }
 
-Verify with: hypervm-mcp service status
-`, config.DefaultPipeName, sid, config.DataDir(), config.BinaryPath())
+Verify with: %s service status
+`, config.DefaultPipeName(), sid, config.DataDir(),
+		config.ServiceName(), config.BinaryPath(), config.BinaryPath())
 }
 
 func yesNo(cond bool, yes, no string) string {

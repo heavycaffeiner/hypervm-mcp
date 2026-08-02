@@ -11,14 +11,51 @@ import (
 	"path/filepath"
 )
 
+// baseName is the product name every other identity is derived from.
+const baseName = "hypervm-mcp"
+
+// instance is set at build time to run a second copy alongside an installed one:
+//
+//	go build -ldflags "-X github.com/heavycaffeiner/hypervm-mcp/internal/config.instance=dev"
+//
+// It suffixes the service, the pipe, the data directory, the event log source
+// and the firewall rules it creates, so a development build cannot restart the
+// installed service, read its credentials, or answer on its pipe.
+//
+// It does NOT isolate Hyper-V. Both instances manage the same hypervisor and see
+// the same virtual machines, so keeping their VM names apart is still a matter
+// of discipline.
+var instance string
+
+// Suffix is "" for a release build and "-<instance>" otherwise.
+func Suffix() string {
+	if instance == "" {
+		return ""
+	}
+	return "-" + instance
+}
+
+// Instance reports the build's instance name, empty for a release build.
+func Instance() string { return instance }
+
 // ServiceName is the Windows service name registered with the SCM.
-const ServiceName = "hypervm-mcp"
+func ServiceName() string { return baseName + Suffix() }
 
 // ServiceDisplayName is what shows up in services.msc.
-const ServiceDisplayName = "hypervm-mcp"
+func ServiceDisplayName() string {
+	if instance == "" {
+		return baseName
+	}
+	return baseName + " (" + instance + ")"
+}
 
 // DefaultPipeName is the pipe basename; the full path is \\.\pipe\<name>.
-const DefaultPipeName = "hypervm-mcp"
+func DefaultPipeName() string { return baseName + Suffix() }
+
+// ResourcePrefix names things this instance creates outside its own directory —
+// firewall rules and NAT entries — so a development build never removes one the
+// installed service owns.
+func ResourcePrefix() string { return baseName + Suffix() }
 
 // currentVersion is bumped whenever the on-disk shape changes incompatibly.
 const currentVersion = 1
@@ -40,20 +77,23 @@ type Config struct {
 }
 
 // DataDir returns %ProgramData%\hypervm-mcp, the root of all persisted state.
+// A development build gets its own directory, so it cannot read or overwrite an
+// installed instance's credentials, pinned host keys or tunnel definitions.
 func DataDir() string {
 	pd := os.Getenv("ProgramData")
 	if pd == "" {
 		pd = `C:\ProgramData`
 	}
-	return filepath.Join(pd, "hypervm-mcp")
+	return filepath.Join(pd, baseName+Suffix())
 }
 
 // BinDir holds the copy of the executable that the SCM launches. It must live
 // somewhere only administrators can write to; see ConfigPath's callers.
 func BinDir() string { return filepath.Join(DataDir(), "bin") }
 
-// BinaryPath is the ImagePath target for the registered service.
-func BinaryPath() string { return filepath.Join(BinDir(), "hypervm-mcp.exe") }
+// BinaryPath is the ImagePath target for the registered service. The instance
+// suffix is kept in the filename so the two show up apart in a process list.
+func BinaryPath() string { return filepath.Join(BinDir(), baseName+Suffix()+".exe") }
 
 // ConfigPath is the location of config.json.
 func ConfigPath() string { return filepath.Join(DataDir(), "config.json") }
@@ -83,7 +123,7 @@ func DefaultPowerShellPath() string {
 func New(allowedSID string) *Config {
 	return &Config{
 		Version:                  currentVersion,
-		PipeName:                 DefaultPipeName,
+		PipeName:                 DefaultPipeName(),
 		AllowedSID:               allowedSID,
 		PowerShellPath:           DefaultPowerShellPath(),
 		PowerShellTimeoutSeconds: 300,
@@ -100,7 +140,7 @@ func (c *Config) PipePath() string { return `\\.\pipe\` + c.PipeName }
 // timeout that fails every call instantly.
 func (c *Config) applyDefaults() {
 	if c.PipeName == "" {
-		c.PipeName = DefaultPipeName
+		c.PipeName = DefaultPipeName()
 	}
 	if c.PowerShellPath == "" {
 		c.PowerShellPath = DefaultPowerShellPath()
