@@ -120,6 +120,78 @@ func TestRenameVMMovesStoredState(t *testing.T) {
 	}
 }
 
+// TestRenameCarriesPinnedHostKey is the check the diskless VM cannot make.
+//
+// A VM that has never been connected to has no pinned key, so a rename moves
+// nothing and reports nothing — which looks identical to a rename that silently
+// failed to move one. This uses a guest that has actually been connected to, and
+// compares the fingerprint on both sides of the rename.
+//
+// The loss is deliberately hard to notice: an absent pin is not an error. The
+// next connection is a first sighting, so a key that should have been refused is
+// recorded as if it were expected. Comparing fingerprints is the only way to
+// tell a carried pin from a re-pinned one.
+//
+// It renames the shared guest and renames it back, including on failure.
+func TestRenameCarriesPinnedHostKey(t *testing.T) {
+	requireRocky(t)
+	session, _ := connect(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+
+	const renamed = "rocky10-test-renamed"
+
+	var before map[string]any
+	call(t, session, ctx, "ssh_info", map[string]any{"name": rockyVM}, &before)
+	if before["host_key_pinned"] != true {
+		t.Skipf("%s has no pinned host key yet; run an SSH test first", rockyVM)
+	}
+	fingerprint, _ := before["fingerprint"].(string)
+	t.Logf("%s is pinned at %s", rockyVM, fingerprint)
+
+	var res map[string]any
+	call(t, session, ctx, "rename_vm",
+		map[string]any{"name": rockyVM, "new_name": renamed}, &res)
+	// Put the name back whatever happens next; every other test addresses this
+	// guest by its usual name.
+	defer func() {
+		_ = tryCall(t, session, context.Background(), "rename_vm",
+			map[string]any{"name": renamed, "new_name": rockyVM})
+	}()
+
+	t.Logf("credentials moved: %v, host key moved: %v", res["credentials_moved"], res["host_key_moved"])
+	if res["host_key_moved"] != true {
+		t.Fatalf("the rename did not carry the pinned host key: %v", res)
+	}
+	if res["credentials_moved"] != true {
+		t.Fatalf("the rename did not carry the credentials: %v", res)
+	}
+
+	var after map[string]any
+	call(t, session, ctx, "ssh_info", map[string]any{"name": renamed}, &after)
+	if after["host_key_pinned"] != true {
+		t.Fatalf("%s has no pinned key after the rename", renamed)
+	}
+	if got, _ := after["fingerprint"].(string); got != fingerprint {
+		t.Fatalf("the pin under the new name is %s, want the one it had: %s", got, fingerprint)
+	}
+	if after["username"] != before["username"] {
+		t.Fatalf("the stored username changed across the rename: %v then %v",
+			before["username"], after["username"])
+	}
+	t.Log("the same fingerprint and account are pinned under the new name")
+
+	// And the credential still works, which is what the caller actually cares
+	// about — a moved entry that no longer authenticates would pass every check
+	// above.
+	host, _ := after["address"].(string)
+	out := sshRunVM(t, session, ctx, renamed, host, "echo renamed-and-still-authenticated")
+	if !strings.Contains(out, "renamed-and-still-authenticated") {
+		t.Fatalf("SSH under the new name returned %q", out)
+	}
+	t.Log("SSH under the new name authenticates with the carried credential and pin")
+}
+
 // hasCredentials asks the service whether a VM has an entry, through the same
 // control channel the CLI uses.
 func hasCredentials(t *testing.T, vm string) bool {
