@@ -75,6 +75,28 @@ $who = $desktop[0]
 
 $dir = Join-Path $env:windir 'Temp\hypervm-session'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
+
+# Sweep anything an interrupted call left behind. The task is unregistered in a
+# finally, but a host-side timeout kills this script outright and the finally
+# never runs — so without this, tasks would accumulate in a guest that is meant
+# to have nothing installed in it.
+#
+# Only what is plainly stale: an hour old and not running. A tighter rule would
+# delete a task belonging to a call happening right now.
+Get-ScheduledTask -TaskName 'hypervm-*' -ErrorAction SilentlyContinue |
+    Where-Object { $_.State -ne 'Running' } |
+    ForEach-Object {
+        $script = Join-Path $dir ($_.TaskName + '.ps1')
+        $stale = -not (Test-Path -LiteralPath $script)
+        if (-not $stale) {
+            $stale = (Get-Item -LiteralPath $script).LastWriteTime -lt (Get-Date).AddHours(-1)
+        }
+        if ($stale) {
+            Unregister-ScheduledTask -TaskName $_.TaskName -Confirm:$false -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath (Join-Path $dir ($_.TaskName + '.out')) -Force -ErrorAction SilentlyContinue
+        }
+    }
 $id  = 'hypervm-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
 $ps1 = Join-Path $dir ($id + '.ps1')
 $out = Join-Path $dir ($id + '.out')
