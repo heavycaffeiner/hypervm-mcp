@@ -110,6 +110,7 @@ Ask Claude Code things like:
 | Tool | |
 |---|---|
 | `create_vm` `delete_vm` | Independent paths for config, disk, checkpoints, paging |
+| `rename_vm` | Renames the VM and moves the credentials, host key and tunnels filed under it |
 | `create_vhd` `attach_vhd` `detach_vhd` | Disks sized in MB, placed on a controller port you choose |
 | `add_scsi_controller` | A second controller, past 64 disks |
 | `attach_iso` `eject_dvd` | Installation media in and out |
@@ -296,6 +297,14 @@ approach:
   an opinion, and it does not change when a distribution changes compositor.
 
 ## Things that will bite you
+
+**A VM's name is an identity here, not a label.** Credentials, the pinned SSH
+host key and every tunnel are filed under it. Rename a VM in Hyper-V Manager and
+this server no longer recognises it: no credentials, no pin — so the next
+connection is treated as a first sighting and a changed key is trusted in
+silence — and tunnels fail the next time they need to find the guest. Use
+`rename_vm`, which moves all three. It does not rename the files on disk; the
+configuration folder, the disks and the checkpoints keep the old name.
 
 **Guest IPs need an agent inside the guest.** Hyper-V does not discover them; it
 reads what an agent reports. A minimal Linux install ships without one, so a

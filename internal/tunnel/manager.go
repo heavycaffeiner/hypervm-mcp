@@ -273,6 +273,31 @@ func (m *Manager) CloseForVM(ctx context.Context, vmName string) []string {
 	return closed
 }
 
+// RenameVM repoints every tunnel from one VM name to another, and reports which.
+//
+// Tunnels keep working across this: they hold an open connection, and the name
+// is what they use to find the guest again — when the service restarts, and when
+// a rebooted VM comes back on a different address. Left pointing at the old
+// name, a tunnel survives until the first time it needs to look the VM up and
+// then fails for a reason nothing connects to a rename days earlier.
+func (m *Manager) RenameVM(oldName, newName string) []string {
+	m.mu.Lock()
+	var moved []string
+	for _, st := range m.items {
+		if st.spec.VMName == oldName {
+			st.spec.VMName = newName
+			moved = append(moved, st.spec.ID)
+		}
+	}
+	m.mu.Unlock()
+
+	if len(moved) > 0 {
+		sort.Strings(moved)
+		m.persist()
+	}
+	return moved
+}
+
 func (m *Manager) shutdown(ctx context.Context, st *state) {
 	for _, ln := range st.listeners {
 		ln.Close()

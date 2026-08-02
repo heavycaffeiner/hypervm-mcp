@@ -117,6 +117,28 @@ func (h *HostKeys) Forget(vmName string) error {
 	return h.save(f)
 }
 
+// Rename moves a pinned key to a new VM name.
+//
+// A pin that is not carried across a rename is worse than no pin: the next
+// connection looks like a first sighting, so a key that should have been
+// refused is trusted without a word. Reports whether there was one to move.
+func (h *HostKeys) Rename(oldName, newName string) (bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	f, err := h.load()
+	if err != nil {
+		return false, err
+	}
+	key, ok := f.Hosts[oldName]
+	if !ok {
+		return false, nil
+	}
+	f.Hosts[newName] = key
+	delete(f.Hosts, oldName)
+	return true, h.save(f)
+}
+
 // Get returns the pinned key for a VM, if any.
 func (h *HostKeys) Get(vmName string) (HostKey, bool) {
 	h.mu.RLock()

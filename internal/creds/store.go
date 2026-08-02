@@ -108,6 +108,28 @@ func (s *Store) Delete(vmName string) error {
 }
 
 // List reports which VMs have credentials, without revealing them.
+// Rename moves a VM's credentials to a new name.
+//
+// Credentials are filed by VM name, so a rename without this leaves them
+// orphaned and every later call reports no credentials for a VM that plainly
+// has some. Reports whether there was an entry to move.
+func (s *Store) Rename(oldName, newName string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	f, err := s.load()
+	if err != nil {
+		return false, err
+	}
+	e, ok := f.Entries[oldName]
+	if !ok {
+		return false, nil
+	}
+	f.Entries[newName] = e
+	delete(f.Entries, oldName)
+	return true, s.save(f)
+}
+
 func (s *Store) List() ([]Info, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

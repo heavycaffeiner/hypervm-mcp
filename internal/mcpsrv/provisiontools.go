@@ -38,6 +38,22 @@ type deleteVMInput struct {
 	Force       bool   `json:"force,omitempty" jsonschema:"Power the VM off first if it is running."`
 }
 
+type renameVMInput struct {
+	Name    string `json:"name" jsonschema:"Exact current name of the VM."`
+	NewName string `json:"new_name" jsonschema:"Name to give it. Must not already belong to another VM."`
+}
+
+// renameVMResult says what moved with the name, so a caller can tell a complete
+// rename from one that left something behind.
+type renameVMResult struct {
+	VM               *hyperv.VMDetail `json:"vm"`
+	CredentialsMoved bool             `json:"credentials_moved"`
+	HostKeyMoved     bool             `json:"host_key_moved"`
+	TunnelsMoved     []string         `json:"tunnels_moved,omitempty"`
+	Note             string           `json:"note,omitempty"`
+	Warnings         []string         `json:"warnings,omitempty"`
+}
+
 type createVHDInput struct {
 	Path          string `json:"path" jsonschema:"Full path of the new .vhdx file."`
 	SizeMB        int    `json:"size_mb,omitempty" jsonschema:"Virtual size in MB. Default 65536 (64 GB). Ignored for a differencing disk."`
@@ -120,6 +136,56 @@ func registerProvisionTools(s *mcp.Server, d *Deps) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in deleteVMInput) (*mcp.CallToolResult, *hyperv.DeleteVMResult, error) {
 		out, err := d.VM.DeleteVM(ctx, in.Name, in.DeleteDisks, in.Force)
 		return nil, out, err
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:  "rename_vm",
+		Title: "Rename a VM",
+		Description: "Rename a VM, and move everything this server files under its name with it.\n\n" +
+			"Stored credentials, the pinned SSH host key and any open tunnels are all keyed by VM " +
+			"name. A plain Hyper-V rename leaves them behind, and the VM then looks unknown: no " +
+			"credentials, no pin — so the next connection is treated as a first sighting and a " +
+			"changed key is trusted silently — and tunnels that fail the next time they need to " +
+			"find the guest. This moves all three and reports what moved.\n\n" +
+			"Only the name changes. The configuration folder, the virtual disks and the " +
+			"checkpoint files keep their old names on disk; renaming those means exporting and " +
+			"reimporting.\n\n" +
+			"Refused if another VM already has the new name. Hyper-V would allow it, but every " +
+			"tool here addresses a VM by name and two would be indistinguishable.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in renameVMInput) (*mcp.CallToolResult, *renameVMResult, error) {
+		// Hyper-V first: it is the only step that can legitimately refuse, and
+		// moving the stored state before knowing the rename took would leave it
+		// filed under a name no VM has.
+		vm, err := d.VM.RenameVM(ctx, in.Name, in.NewName)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		out := &renameVMResult{VM: vm}
+		if moved, err := d.Creds.Rename(in.Name, in.NewName); err != nil {
+			out.Warnings = append(out.Warnings,
+				"the VM was renamed but its credentials could not be moved: "+err.Error()+
+					". Store them again with `hypervm-mcp cred set --vm "+in.NewName+"`.")
+		} else {
+			out.CredentialsMoved = moved
+		}
+
+		if moved, err := d.HostKeys.Rename(in.Name, in.NewName); err != nil {
+			out.Warnings = append(out.Warnings,
+				"the VM was renamed but its pinned host key could not be moved: "+err.Error()+
+					". The next SSH connection will look like a first sighting.")
+		} else {
+			out.HostKeyMoved = moved
+		}
+
+		// Pooled connections are filed under the old name too, and one left
+		// there would answer for a VM that no longer has that name.
+		d.SSH.Drop(in.Name)
+
+		out.TunnelsMoved = d.Tunnels.RenameVM(in.Name, in.NewName)
+		out.Note = "Files on disk keep the old name: the configuration folder, the disks and any " +
+			"checkpoints. Only the VM's name changed."
+		return nil, out, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
