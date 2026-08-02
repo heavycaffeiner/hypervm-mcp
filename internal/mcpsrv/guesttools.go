@@ -94,7 +94,13 @@ func registerGuestTools(s *mcp.Server, d *Deps) {
 			"before anything else can reach it — installing sshd, or changing network settings that " +
 			"would cut an SSH session mid-command.\n\n" +
 			"Windows guests only; Linux has no PowerShell Direct endpoint, so use ssh_exec there. " +
-			"It also needs a password: a key is not enough for this transport.",
+			"It also needs a password: a key is not enough for this transport.\n\n" +
+			"The session it gets is elevated — an unfiltered administrator token, so installing " +
+			"features and writing under HKLM work with nothing to confirm.\n\n" +
+			"But it is session 0, which has no desktop. Starting a graphical program here appears " +
+			"to succeed and shows nothing, a screen capture taken here is blank, and UI automation " +
+			"finds no elements — none of which reports an error. For anything with a window, use " +
+			"guest_run_in_session.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in guestInvokeInput) (*mcp.CallToolResult, *hyperv.GuestResult, error) {
 		user, pass, err := guestCredentials(d, in.VMName, in.Username, in.Password)
 		if err != nil {
@@ -178,8 +184,13 @@ func registerGuestTools(s *mcp.Server, d *Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:  "guest_run_in_session",
-		Title: "Run a command on the guest's desktop",
-		Description: "Run a PowerShell command in the guest's interactive session, elevated.\n\n" +
+		Title: "Run a command on a Windows guest's desktop",
+		Description: "Windows guests only. Run a PowerShell command in the guest's interactive " +
+			"session, elevated.\n\n" +
+			"There is no Linux equivalent of this and there cannot be one here: it is built on " +
+			"PowerShell Direct and the Windows task scheduler, and Hyper-V gives a Linux guest no " +
+			"command channel at all. To reach a Linux desktop, use ssh_exec with DISPLAY and " +
+			"XDG_RUNTIME_DIR set for the logged-in seat.\n\n" +
 			"guest_invoke_command lands in session 0, which Windows keeps for services and which " +
 			"has no desktop: a window opened there is drawn nowhere, a screen capture taken there " +
 			"is blank, and UI automation finds nothing. Anything involving a graphical program " +

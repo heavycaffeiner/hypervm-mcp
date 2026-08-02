@@ -44,7 +44,39 @@ be pointed at a port; use mode "ssh" when the service is bound to the guest's ow
 127.0.0.1, because no direct route reaches that. An External virtual switch gives
 the guest its own address on the physical LAN, which is the only option when the
 host already holds the port (SMB, RDP, WinRM), when the protocol is sensitive to
-host identity, or when other machines must reach the guest directly.`
+host identity, or when other machines must reach the guest directly.
+
+Guest-facing tools split by where their mechanism lives, and the split decides
+which guests they work on. capture_vm_screen, send_vm_key and send_vm_mouse
+drive Hyper-V's own console devices, so they work whatever the guest runs — or
+even when nothing is running yet. guest_invoke_command and guest_run_in_session
+go through PowerShell Direct and are Windows-only; the Linux equivalent is
+ssh_exec. guest_copy_file works on both, but a Linux guest needs hypervfcopyd
+from hyperv-daemons.
+
+A Windows guest can be driven before it has any network at all.
+guest_invoke_command runs a command over the VMBus and gets an unfiltered
+administrator token, so installing features and writing under HKLM work with no
+prompt to answer. It needs a password; an SSH key is not enough for that
+transport.
+
+Anything graphical needs one more step, and skipping it fails quietly.
+guest_invoke_command lands in session 0, which has no desktop: a window opened
+there is drawn nowhere, a screen capture taken there is blank, and UI automation
+finds no elements — all without an error. Use guest_run_in_session to run in the
+logged-on user's session instead. It is elevated too, so it is also the way to
+drive a program that needs administrator and shows a window. It needs somebody
+logged on, which means the guest needs automatic logon arranged.
+
+To see a VM at all, capture_vm_screen reads the console from the host and needs
+nothing running inside the guest — it is the only way to look at a firmware
+prompt, a boot menu, a stop error, or an installer waiting on a dialog.
+send_vm_key and send_vm_mouse drive the console's keyboard and pointer, which
+likewise works before any guest software exists to do it.
+
+Judge a GUI by its automation tree, queried through guest_run_in_session, not by
+its pixels: pixels move with resolution, theme and DPI, and the capture is a
+scaled thumbnail. Screenshots are for finding out what went wrong.`
 
 // titleSuffix renders the build's instance name for display, empty on a release.
 func titleSuffix() string {

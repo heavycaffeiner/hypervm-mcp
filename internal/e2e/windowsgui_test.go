@@ -138,6 +138,8 @@ func TestWindowsGUICaptureScreen(t *testing.T) {
 		Height int    `json:"height"`
 		PNG    int    `json:"png_bytes"`
 		Path   string `json:"path"`
+		Blank  bool   `json:"blank"`
+		Note   string `json:"note"`
 	}
 	raw, _ := json.Marshal(res.StructuredContent)
 	if err := json.Unmarshal(raw, &meta); err != nil {
@@ -182,11 +184,21 @@ func TestWindowsGUICaptureScreen(t *testing.T) {
 	// display and a session-0 capture both produce and neither says so. Judge it
 	// by what is in the image, not by how well it compressed.
 	colours, dominant, share := colourSpread(t, onDisk)
-	t.Logf("the capture holds %d distinct colours; %v covers %.0f%% of it",
+	t.Logf("the capture holds %d distinct colours; %v covers %.3f%% of it",
 		colours, dominant, share*100)
-	if colours < 2 {
-		t.Fatalf("the capture is one flat colour (%v), so the guest is showing nothing. "+
-			"A slept display does this; so does capturing from a session with no desktop.", dominant)
+	// Judged by coverage, not by the number of colours: a blanked console still
+	// returns a stray pixel or two, so counting distinct colours calls a screen
+	// that is 99.9997% black "content".
+	if share >= 0.999 {
+		t.Fatalf("%v covers %.3f%% of the capture, so the guest is showing nothing. "+
+			"A slept display does this; so does capturing from a session with no desktop.",
+			dominant, share*100)
+	}
+
+	// The server reaches the same verdict and says so, which is what a client
+	// that cannot look at the picture has to rely on.
+	if meta.Blank {
+		t.Fatalf("the server reported the frame blank: %s", meta.Note)
 	}
 }
 

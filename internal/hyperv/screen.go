@@ -3,6 +3,7 @@ package hyperv
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -27,6 +28,13 @@ type ScreenCapture struct {
 	GuestHeight int    `json:"guest_height,omitempty"`
 	PNG         int    `json:"png_bytes"`
 	Path        string `json:"path,omitempty"`
+
+	// Blank says every pixel came back the same colour. Reported rather than
+	// left for the reader to notice, because a blank frame is the one result
+	// that looks like a working capture of a broken VM when it is usually
+	// neither.
+	Blank bool   `json:"blank,omitempty"`
+	Note  string `json:"note,omitempty"`
 
 	// png is the encoded image, returned to the caller as image content rather
 	// than through the JSON result.
@@ -149,6 +157,15 @@ func (c *Client) CaptureScreen(ctx context.Context, vmName string, width, height
 		PNG:         buf.Len(),
 		png:         buf.Bytes(),
 	}
+	if share := dominantShare(frame, width*height*2); share >= blankThreshold {
+		out.Blank = true
+		out.Note = fmt.Sprintf(
+			"One colour covers %.2f%% of this frame, so there is nothing to read in it. "+
+				"A blanked display is the usual cause: send_vm_key with \"0x10\" (shift) "+
+				"wakes it without typing anything, then capture again. A guest that has "+
+				"not reached video output yet looks the same.", share*100)
+	}
+
 	if dest != "" {
 		if err := os.WriteFile(dest, buf.Bytes(), 0o600); err != nil {
 			return nil, hverr.Wrap(hverr.PathNotAccessible, err, "could not write %s", dest)
@@ -156,6 +173,35 @@ func (c *Client) CaptureScreen(ctx context.Context, vmName string, width, height
 		out.Path = dest
 	}
 	return out, nil
+}
+
+// blankThreshold is how much of a frame one colour has to cover before there is
+// nothing worth looking at.
+//
+// Not 100%: a blanked console still comes back with a stray pixel or two, and
+// requiring exact uniformity let a screen that was 99.9997% black pass as
+// content. The gap between a blank frame and a real one is enormous — a desktop
+// puts its commonest colour around a third of the picture — so anywhere in this
+// region separates them.
+const blankThreshold = 0.999
+
+// dominantShare returns how much of the frame its commonest colour covers.
+func dominantShare(frame []byte, n int) float64 {
+	if n < 4 || len(frame) < n {
+		return 0
+	}
+	// One bucket per possible RGB565 value: exact, and cheaper than a map.
+	var counts [1 << 16]int32
+	for i := 0; i < n; i += 2 {
+		counts[uint16(frame[i])|uint16(frame[i+1])<<8]++
+	}
+	var best int32
+	for _, c := range counts {
+		if c > best {
+			best = c
+		}
+	}
+	return float64(best) / float64(n/2)
 }
 
 // decodeRGB565 turns Hyper-V's frame buffer into an image.
