@@ -70,9 +70,15 @@ func (c *Client) SendMouse(ctx context.Context, vmName string, x, y, screenWidth
         throw "HVERR:VM_WRONG_STATE|'$($P.name)' is not running; there is no pointer to move"
     }
 
+    # Generation 2 VMs get the synthetic pointer; Generation 1 VMs are given an
+    # emulated PS/2 one instead, and a tool that knows only the first name fails
+    # on every legacy guest.
     $mouse = @(Get-CimAssociatedInstance -InputObject $vm -ResultClassName Msvm_SyntheticMouse)[0]
     if (-not $mouse) {
-        throw "HVERR:INTERNAL|'$($P.name)' exposes no synthetic mouse. The guest binds it through its integration services, so a guest still in firmware has none."
+        $mouse = @(Get-CimAssociatedInstance -InputObject $vm -ResultClassName Msvm_Ps2Mouse)[0]
+    }
+    if (-not $mouse) {
+        throw "HVERR:INTERNAL|'$($P.name)' exposes no pointer device at all, synthetic or emulated."
     }
 
     # Positions are in the guest's own pixels, so the caller's coordinates have
@@ -95,7 +101,18 @@ func (c *Client) SendMouse(ctx context.Context, vmName string, x, y, screenWidth
         VerticalPosition   = [int]$py
     }
     if ([int]$r.ReturnValue -ne 0) {
-        throw "HVERR:INTERNAL|the mouse refused the move to ($px,$py) on a ${rw}x${rh} screen (returned $($r.ReturnValue))"
+        # A device that exists but rejects everything is the normal state before
+        # a guest binds it. Firmware listens to the keyboard and not the pointer,
+        # so saying which tool does work there saves the reader the experiment.
+        $why = switch ([int]$r.ReturnValue) {
+            32768   { "nothing in the guest is driving the pointer yet. Firmware has a keyboard but no mouse, so use send_vm_key until an operating system has started." }
+            32769   { "access was denied." }
+            32770   { "this VM does not support pointer positioning." }
+            32773   { "($px,$py) was rejected as out of range for a ${rw}x${rh} screen." }
+            32775   { "the VM is not in a state that accepts pointer input." }
+            default { "TypeKey-style call returned $($r.ReturnValue)." }
+        }
+        throw "HVERR:INTERNAL|the pointer could not be moved to ($px,$py) on a ${rw}x${rh} screen: $why"
     }
 
     if ([int]$P.button -gt 0) {

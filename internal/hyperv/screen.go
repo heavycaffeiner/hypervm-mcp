@@ -60,11 +60,15 @@ func (c *Client) CaptureScreen(ctx context.Context, vmName string, width, height
 	if vmName == "" {
 		return nil, hverr.New(hverr.InvalidArgument, "vm_name is required")
 	}
-	if width <= 0 {
-		width = 1024
+	// Zero means "whatever the guest is running", resolved in the script below.
+	// A fixed default cannot work: Hyper-V refuses a size far from the console's
+	// own, so 1024x768 fails outright on anything in a text mode — which is
+	// every Generation 1 VM at its firmware screen.
+	if width < 0 {
+		width = 0
 	}
-	if height <= 0 {
-		height = 768
+	if height < 0 {
+		height = 0
 	}
 	if width > 4096 || height > 4096 {
 		return nil, hverr.New(hverr.InvalidArgument, "width and height must each be 4096 or less")
@@ -91,14 +95,42 @@ func (c *Client) CaptureScreen(ctx context.Context, vmName string, width, height
         throw "HVERR:VM_WRONG_STATE|'$($P.name)' is not running; a stopped VM has no console to photograph"
     }
 
+    # What the console is actually running. Asked first because it is also the
+    # only size the capture is guaranteed to accept.
+    $gw = 0; $gh = 0
+    $head = @(Get-CimAssociatedInstance -InputObject $vm -ResultClassName Msvm_VideoHead |
+              Where-Object { $_.CurrentHorizontalResolution -gt 0 })[0]
+    if ($head) {
+        $gw = [int]$head.CurrentHorizontalResolution
+        $gh = [int]$head.CurrentVerticalResolution
+    }
+
+    $w = [int]$P.width; $h = [int]$P.height
+    if ($w -le 0 -or $h -le 0) {
+        if ($gw -le 0) {
+            throw "HVERR:VM_WRONG_STATE|'$($P.name)' reports no display resolution yet, so there is no size to capture at. It may have only just started."
+        }
+        $w = $gw; $h = $gh
+    }
+
     $svc = Get-CimInstance -Namespace root\virtualization\v2 -ClassName Msvm_VirtualSystemManagementService
     $r = Invoke-CimMethod -InputObject $svc -MethodName GetVirtualSystemThumbnailImage -Arguments @{
         TargetSystem = [CimInstance]$vm
-        WidthPixels  = [uint16]$P.width
-        HeightPixels = [uint16]$P.height
+        WidthPixels  = [uint16]$w
+        HeightPixels = [uint16]$h
+    }
+    if ([int]$r.ReturnValue -ne 0 -and $gw -gt 0 -and ($w -ne $gw -or $h -ne $gh)) {
+        # A requested size Hyper-V will not scale to is the common cause, and
+        # the size it will always accept is the one the console is using.
+        $w = $gw; $h = $gh
+        $r = Invoke-CimMethod -InputObject $svc -MethodName GetVirtualSystemThumbnailImage -Arguments @{
+            TargetSystem = [CimInstance]$vm
+            WidthPixels  = [uint16]$w
+            HeightPixels = [uint16]$h
+        }
     }
     if ([int]$r.ReturnValue -ne 0) {
-        throw "HVERR:INTERNAL|Hyper-V refused the capture (returned $($r.ReturnValue)). Sizes far from the guest's own resolution are the usual cause."
+        throw "HVERR:INTERNAL|Hyper-V refused to capture '$($P.name)' at ${w}x${h} (returned $($r.ReturnValue)); its console reports ${gw}x${gh}."
     }
     if (-not $r.ImageData) { throw "HVERR:INTERNAL|Hyper-V returned no image data" }
 
@@ -117,6 +149,8 @@ func (c *Client) CaptureScreen(ctx context.Context, vmName string, width, height
     $result = [ordered]@{
         path         = $tmp
         bytes        = [int]([byte[]]$r.ImageData).Length
+        width        = $w
+        height       = $h
         guest_width  = $gw
         guest_height = $gh
     }`
@@ -124,6 +158,8 @@ func (c *Client) CaptureScreen(ctx context.Context, vmName string, width, height
 	var raw struct {
 		Path        string `json:"path"`
 		Bytes       int    `json:"bytes"`
+		Width       int    `json:"width"`
+		Height      int    `json:"height"`
 		GuestWidth  int    `json:"guest_width"`
 		GuestHeight int    `json:"guest_height"`
 	}
@@ -138,6 +174,10 @@ func (c *Client) CaptureScreen(ctx context.Context, vmName string, width, height
 	if err != nil {
 		return nil, hverr.Wrap(hverr.Internal, err, "could not read the captured frame")
 	}
+
+	// The size actually captured, which is not the size asked for when the
+	// request was zero or had to fall back to the console's own.
+	width, height = raw.Width, raw.Height
 
 	img, err := decodeRGB565(frame, width, height)
 	if err != nil {

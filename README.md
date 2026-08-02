@@ -253,11 +253,30 @@ mouse.
 For a human to look at it, forward RDP instead: `open_tunnel` to guest port 3389,
 `bind_scope=tailnet` if you want to watch from another machine.
 
-### Which of these work on a Linux guest
+### Which of these work on which guest
 
-The console tools do, because they drive Hyper-V's own devices rather than
-anything inside the VM. `capture_vm_screen`, `send_vm_key` and `send_vm_mouse`
-are exercised against Linux as well as Windows.
+The console tools drive Hyper-V's own devices rather than anything inside the VM,
+so how far they generalise depends on how much of the guest each one needs.
+
+| | Needs from the guest | Run against |
+|---|---|---|
+| `capture_vm_screen` | Nothing at all | Windows, Linux, firmware with no OS |
+| `send_vm_key` | Something listening — firmware counts | Windows, Linux, firmware with no OS |
+| `send_vm_mouse` | A bound pointer, which firmware has not | Windows, Linux |
+| `guest_run_in_session` | PowerShell Direct and a desktop | Windows only |
+
+Give no `width`/`height` to `capture_vm_screen` and it uses the console's own
+resolution, which is the only size guaranteed to be accepted — a Generation 1
+firmware screen is 640x400, nowhere near a sensible-looking default.
+
+The pointer is a synthetic device on Generation 2 VMs and an emulated PS/2 one on
+Generation 1; both are handled. Keys are Windows virtual-key codes that Hyper-V
+turns into scancodes, so letters and navigation keys are safe everywhere while
+symbols depend on the guest's own keyboard layout.
+
+A guest with no Hyper-V integration drivers still captures, because that path
+needs nothing of it, and will likely still take keys at the firmware level — but
+its pointer will not bind. That case is untested here.
 
 `guest_run_in_session` does not, and cannot: it is PowerShell Direct and the
 Windows task scheduler, and Hyper-V gives a Linux guest no command channel at
@@ -460,6 +479,7 @@ hardware, because on a public server that is a different claim.
 | Console capture | The text console, and a Wayland session, both read from the host |
 | Console keyboard | Keys reach a Linux text console; the frame changes in response |
 | Console pointer | Four positions across the screen, each confirmed at the guest's own input device |
+| No guest at all | A Generation 1 and a Generation 2 VM with no disk: both firmware screens captured, both took keys, both refused the pointer with a reason |
 
 **Exercised end to end**, against Windows Server 2022 (Desktop Experience):
 

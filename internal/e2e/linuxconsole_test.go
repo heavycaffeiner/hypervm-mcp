@@ -156,12 +156,20 @@ type captureMeta struct {
 
 func captureTo(t *testing.T, s *mcp.ClientSession, ctx context.Context, vm, path string) captureMeta {
 	t.Helper()
+	return captureAt(t, s, ctx, vm, path, 1024, 768)
+}
+
+// captureAt is captureTo at a chosen size; zero means the guest's own, which is
+// the only size every console accepts.
+func captureAt(t *testing.T, s *mcp.ClientSession, ctx context.Context, vm, path string, w, h int) captureMeta {
+	t.Helper()
 	var meta captureMeta
+	args := map[string]any{"vm_name": vm, "output_path": path}
+	if w > 0 && h > 0 {
+		args["width"], args["height"] = w, h
+	}
 	res, err := s.CallTool(ctx, &mcp.CallToolParams{
-		Name: "capture_vm_screen",
-		Arguments: map[string]any{
-			"vm_name": vm, "width": 1024, "height": 768, "output_path": path,
-		},
+		Name: "capture_vm_screen", Arguments: args,
 	})
 	if err != nil {
 		t.Fatalf("capture_vm_screen: %v", err)
