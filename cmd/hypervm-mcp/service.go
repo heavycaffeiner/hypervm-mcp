@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -89,13 +90,34 @@ func cmdUninstall(args []string) int {
 		}
 		return relaunch(relaunchArgs, func() {
 			fmt.Println("Service removed.")
-			if *purge {
-				fmt.Printf("Deleted %s\n", config.DataDir())
+			if !*purge {
+				return
 			}
+			// The elevated run did the work on a console nobody sees, so report
+			// what is actually there rather than what was asked for. When this
+			// command came from the copy on PATH, that copy is still running and
+			// Windows will not let it delete itself.
+			if _, err := os.Stat(config.DataDir()); err != nil {
+				fmt.Printf("Deleted %s\n", config.DataDir())
+				return
+			}
+			fmt.Printf("Deleted everything in %s except the program you just ran.\n",
+				config.DataDir())
+			fmt.Println("Nothing sensitive is left. Remove the folder once this " +
+				"process exits, or leave it — installing again reuses the file.")
 		})
 	}
 
 	if err := svcmgr.Uninstall(*purge); err != nil {
+		// Not being able to delete the program currently running is expected
+		// when the purge is invoked through the copy on PATH, and everything
+		// that matters is already gone.
+		if errors.Is(err, svcmgr.ErrPurgedExceptSelf) {
+			fmt.Println(err)
+			fmt.Println("Nothing sensitive is left. Delete the folder once this " +
+				"process exits, or leave it — installing again reuses the file.")
+			return 0
+		}
 		recordError(*errFile, err)
 		return fail("%v", err)
 	}

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -132,10 +133,70 @@ func Uninstall(purge bool) error {
 	_ = eventlog.Remove(config.ServiceName())
 
 	if purge {
-		if err := os.RemoveAll(config.DataDir()); err != nil {
-			return fmt.Errorf("remove %s: %w", config.DataDir(), err)
+		return purgeDataDir()
+	}
+	return nil
+}
+
+// ErrPurgedExceptSelf reports a purge that removed everything it could reach.
+//
+// It is not a failure: the service is gone and every stored secret with it. The
+// caller decides how to say so.
+var ErrPurgedExceptSelf = errors.New("the running executable could not be removed")
+
+// purgeDataDir deletes the data directory, tolerating the one file it cannot.
+//
+// Installing puts the staged binary on PATH, so `service uninstall --purge`
+// normally runs that very binary — and Windows will not unlink a running image.
+// Copying itself elsewhere and re-running from there does not help either: the
+// original is still alive waiting for the copy, and still holding the file.
+//
+// So delete everything else and say plainly what is left. Nothing sensitive
+// remains, and installing again simply reuses the file.
+func purgeDataDir() error {
+	root := config.DataDir()
+	if err := os.RemoveAll(root); err == nil {
+		return nil
+	}
+
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("remove %s: %w", root, err)
+	}
+	self = filepath.Clean(self)
+
+	// Depth first, so directories are empty by the time they are reached.
+	var failed []string
+	var walk func(string)
+	walk = func(dir string) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			p := filepath.Join(dir, e.Name())
+			if e.IsDir() {
+				walk(p)
+				_ = os.Remove(p)
+				continue
+			}
+			if strings.EqualFold(p, self) {
+				continue // this is the program running right now
+			}
+			if err := os.Remove(p); err != nil {
+				failed = append(failed, p)
+			}
 		}
 	}
+	walk(root)
+
+	if len(failed) > 0 {
+		return fmt.Errorf("remove %s: could not delete %s", root, strings.Join(failed, ", "))
+	}
+	if _, err := os.Stat(self); err == nil {
+		return fmt.Errorf("%w: %s", ErrPurgedExceptSelf, self)
+	}
+	_ = os.Remove(root)
 	return nil
 }
 
