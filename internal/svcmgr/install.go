@@ -12,8 +12,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -138,21 +140,17 @@ func Uninstall(purge bool) error {
 	return nil
 }
 
-// ErrPurgedExceptSelf reports a purge that removed everything it could reach.
-//
-// It is not a failure: the service is gone and every stored secret with it. The
-// caller decides how to say so.
-var ErrPurgedExceptSelf = errors.New("the running executable could not be removed")
-
-// purgeDataDir deletes the data directory, tolerating the one file it cannot.
+// purgeDataDir deletes the data directory, including the program doing it.
 //
 // Installing puts the staged binary on PATH, so `service uninstall --purge`
-// normally runs that very binary — and Windows will not unlink a running image.
-// Copying itself elsewhere and re-running from there does not help either: the
-// original is still alive waiting for the copy, and still holding the file.
+// normally runs that very binary. Windows will not unlink a running image —
+// but it will happily rename one. So move it out of the way first: the
+// directory then deletes like any other, and what is left is a stray file
+// outside the product's own folder, which a small helper removes as soon as
+// this process exits.
 //
-// So delete everything else and say plainly what is left. Nothing sensitive
-// remains, and installing again simply reuses the file.
+// Copying to TEMP and re-running from there does not work, for the record: the
+// original stays alive waiting on the copy, still holding the file.
 func purgeDataDir() error {
 	root := config.DataDir()
 	if err := os.RemoveAll(root); err == nil {
@@ -164,40 +162,65 @@ func purgeDataDir() error {
 		return fmt.Errorf("remove %s: %w", root, err)
 	}
 	self = filepath.Clean(self)
+	if rel, err := filepath.Rel(root, self); err != nil || strings.HasPrefix(rel, "..") {
+		// Something else is holding a file; renaming ours would not help.
+		return fmt.Errorf("remove %s: %w", root, err)
+	}
 
-	// Depth first, so directories are empty by the time they are reached.
-	var failed []string
-	var walk func(string)
-	walk = func(dir string) {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return
-		}
-		for _, e := range entries {
-			p := filepath.Join(dir, e.Name())
-			if e.IsDir() {
-				walk(p)
-				_ = os.Remove(p)
-				continue
-			}
-			if strings.EqualFold(p, self) {
-				continue // this is the program running right now
-			}
-			if err := os.Remove(p); err != nil {
-				failed = append(failed, p)
-			}
-		}
+	// Renamed into the parent directory, so it is certainly the same volume —
+	// a rename across volumes is a copy and would be refused for a running
+	// image. The leading dot keeps it out of the way if anyone looks.
+	stray := filepath.Join(filepath.Dir(root),
+		fmt.Sprintf(".%s-old-%d.exe", filepath.Base(root), os.Getpid()))
+	if err := os.Rename(self, stray); err != nil {
+		return fmt.Errorf("move the running executable out of %s: %w", root, err)
 	}
-	walk(root)
 
-	if len(failed) > 0 {
-		return fmt.Errorf("remove %s: could not delete %s", root, strings.Join(failed, ", "))
+	if err := os.RemoveAll(root); err != nil {
+		// Put it back rather than leave the install half-dismantled.
+		_ = os.Rename(stray, self)
+		return fmt.Errorf("remove %s: %w", root, err)
 	}
-	if _, err := os.Stat(self); err == nil {
-		return fmt.Errorf("%w: %s", ErrPurgedExceptSelf, self)
-	}
-	_ = os.Remove(root)
+
+	scheduleDelete(stray)
 	return nil
+}
+
+// scheduleDelete removes a file once this process lets go of it.
+//
+// A detached cmd retries for about a minute, which covers the moment between
+// this process returning and Windows releasing the image. If that never runs,
+// the file is marked for deletion at the next restart, so nothing is left
+// behind either way. Both are best effort: the file is outside the product
+// directory by now and holds nothing.
+func scheduleDelete(path string) {
+	// Ignored deliberately: this is the backstop, and the helper below is what
+	// normally does the work.
+	_ = windows.MoveFileEx(windows.StringToUTF16Ptr(path), nil,
+		windows.MOVEFILE_DELAY_UNTIL_REBOOT)
+
+	// Written to a file rather than passed as one long argument, because cmd
+	// re-parses quotes in a way that is painful to get right through exec.
+	script := filepath.Join(os.TempDir(), fmt.Sprintf("hypervm-mcp-cleanup-%d.cmd", os.Getpid()))
+	body := "@echo off\r\n" +
+		"for /l %%i in (1,1,30) do (\r\n" +
+		"  if not exist \"" + path + "\" goto done\r\n" +
+		"  del /f /q \"" + path + "\" >nul 2>&1\r\n" +
+		"  ping -n 2 127.0.0.1 >nul\r\n" +
+		")\r\n" +
+		":done\r\n" +
+		"del /f /q \"%~f0\" >nul 2>&1\r\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		return
+	}
+
+	cmd := exec.Command("cmd", "/c", script)
+	// No console and no wait: this outlives the caller on purpose.
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: windows.DETACHED_PROCESS | windows.CREATE_NO_WINDOW,
+	}
+	_ = cmd.Start()
 }
 
 // Start starts an installed service.
