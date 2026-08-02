@@ -18,6 +18,13 @@ type guestInvokeInput struct {
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"Default 120."`
 }
 
+type sendKeyInput struct {
+	VMName     string   `json:"vm_name" jsonschema:"Exact name of the VM. It must be running."`
+	Keys       []string `json:"keys" jsonschema:"Keys to press in order: names such as \"space\", \"enter\", \"esc\", \"f8\", \"up\", or virtual-key codes such as \"0x20\"."`
+	Repeat     int      `json:"repeat,omitempty" jsonschema:"How many times to send the sequence. Default 1. Use ~20 to cover a boot prompt whose timing is unknown."`
+	IntervalMS int      `json:"interval_ms,omitempty" jsonschema:"Milliseconds between repeats. Default 1000."`
+}
+
 type guestCopyInput struct {
 	VMName          string `json:"vm_name" jsonschema:"Exact name of the VM."`
 	SourcePath      string `json:"source_path" jsonschema:"File on the host to copy."`
@@ -58,6 +65,37 @@ func registerGuestTools(s *mcp.Server, d *Deps) {
 		}
 		out, err := d.VM.GuestInvokeCommand(ctx, in.VMName, in.Command, user, pass,
 			time.Duration(in.TimeoutSeconds)*time.Second)
+		return nil, out, err
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:  "send_vm_key",
+		Title: "Press keys at a VM's console",
+		Description: "Type into a VM's console keyboard, before it has an operating system.\n\n" +
+			"This is for prompts nothing inside the guest can answer. Microsoft's installation " +
+			"media asks \"Press any key to boot from CD or DVD\" and gives up after a few seconds, " +
+			"so an unattended install from a stock ISO never starts unless something presses a " +
+			"key — and guest_invoke_command, ssh_exec and guest_copy_file all need a booted " +
+			"guest, which is exactly what does not exist yet.\n\n" +
+			"The prompt is a race: it opens a few seconds after power-on and closes again. Rather " +
+			"than time it, set repeat and interval_ms to press steadily across the window — " +
+			"20 presses a second apart covers a normal boot.\n\n" +
+			"Keys are names (\"space\", \"enter\", \"esc\", \"f8\", arrows) or virtual-key codes " +
+			"(\"0x20\"). This types single keys; it is not a way to drive an installer by hand.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sendKeyInput) (*mcp.CallToolResult, *hyperv.KeyResult, error) {
+		if len(in.Keys) == 0 {
+			return nil, nil, hverr.New(hverr.InvalidArgument, "keys is required")
+		}
+		codes := make([]int, 0, len(in.Keys))
+		for _, k := range in.Keys {
+			code, err := hyperv.ParseKey(k)
+			if err != nil {
+				return nil, nil, err
+			}
+			codes = append(codes, code)
+		}
+		out, err := d.VM.SendKeys(ctx, in.VMName, codes, in.Repeat,
+			time.Duration(in.IntervalMS)*time.Millisecond)
 		return nil, out, err
 	})
 
