@@ -103,7 +103,10 @@ func registerStorageTools(s *mcp.Server, d *Deps) {
 		Title: "Resize a virtual disk",
 		Description: "Change a disk's virtual size. The disk must not be attached to a running VM.\n\n" +
 			"This grows the container, not the filesystem inside it. Extending the partition and " +
-			"filesystem is a guest-side step this tool deliberately leaves to you.",
+			"filesystem is a guest-side step this tool deliberately leaves to you.\n\n" +
+			"Shrinking discards whatever lies beyond the new size, so back the disk up first if " +
+			"the guest has ever written near the end of it.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in resizeVHDInput) (*mcp.CallToolResult, *hyperv.VHDInfo, error) {
 		out, err := d.VM.ResizeVHD(ctx, in.Path, in.SizeMB)
 		return nil, out, err

@@ -153,7 +153,13 @@ func registerGuestTools(s *mcp.Server, d *Deps) {
 			"What comes back is a scaled thumbnail of the console, so read it, do not compare it. " +
 			"For deciding whether a GUI is correct, drive its automation tree from " +
 			"guest_run_in_session instead; pixels shift with resolution, theme and DPI.\n\n" +
-			"Ask for a size near the guest's own resolution: Hyper-V refuses sizes far from it.",
+			"Give no width or height and it uses the console's own resolution, which is the only " +
+			"size always accepted — a Generation 1 firmware screen is 640x480-ish, nowhere near a " +
+			"sensible-looking default.\n\n" +
+			"If the result says blank, one colour covers the whole frame: usually a display that " +
+			"has gone to sleep, which send_vm_key wakes without typing anything.\n\n" +
+			"This changes nothing in the VM. It writes a file on the host only when output_path " +
+			"is given; otherwise the picture comes back in the reply and nowhere else.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in captureScreenInput) (*mcp.CallToolResult, *hyperv.ScreenCapture, error) {
 		out, err := d.VM.CaptureScreen(ctx, in.VMName, in.Width, in.Height, in.OutputPath)
 		if err != nil {

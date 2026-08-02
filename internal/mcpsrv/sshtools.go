@@ -150,9 +150,15 @@ func registerSSHTools(s *mcp.Server, d *Deps) {
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "ssh_forget_host_key",
-		Title:       "Forget a pinned SSH host key",
-		Description: "Drop the pinned host key for a VM, so the next connection pins whatever it finds. Use after rebuilding a VM if you prefer an explicit reset over passing trust_new_key.",
+		Name:  "ssh_forget_host_key",
+		Title: "Forget a pinned SSH host key",
+		Description: "Drop the pinned host key for a VM, so the next connection pins whatever it finds.\n\n" +
+			"This throws away the only thing that would notice a VM's identity changing: with no " +
+			"pin, a substituted host is indistinguishable from the real one and is trusted " +
+			"silently. Use it when you know why the key changed — after rebuilding the VM — and " +
+			"prefer an explicit reset to passing trust_new_key on one call.\n\n" +
+			"Renaming a VM does not need this: rename_vm carries the pin across.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in vmNameInput) (*mcp.CallToolResult, map[string]any, error) {
 		if err := d.HostKeys.Forget(in.Name); err != nil {
 			return nil, nil, err

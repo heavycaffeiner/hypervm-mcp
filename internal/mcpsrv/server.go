@@ -46,6 +46,12 @@ the guest its own address on the physical LAN, which is the only option when the
 host already holds the port (SMB, RDP, WinRM), when the protocol is sensitive to
 host identity, or when other machines must reach the guest directly.
 
+A VM's name is an identity here, not a label. Stored credentials, the pinned SSH
+host key and every open tunnel are filed under it. Renaming a VM any other way
+leaves all three behind and this server stops recognising it — no credentials, no
+pin, so the next connection is treated as a first sighting and a changed host key
+is trusted in silence. Use rename_vm, which carries them across.
+
 Guest-facing tools split by where their mechanism lives, and the split decides
 which guests they work on. capture_vm_screen, send_vm_key and send_vm_mouse
 drive Hyper-V's own console devices, so they work whatever the guest runs — or
