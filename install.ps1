@@ -137,8 +137,17 @@ if (-not $SkipClaudeCode) {
     if ($claude) {
         Write-Step 'Registering with Claude Code'
         # -s user makes it available in every project rather than just this one.
-        $output = & claude mcp add hypervm-mcp -s user -- $installed bridge 2>&1 | Out-String
-        if ($LASTEXITCODE -eq 0) {
+        #
+        # The redirection needs Continue around it. Windows PowerShell wraps a
+        # native command's stderr in error records, and under 'Stop' that turns
+        # a message this script wants to *read* into a terminating error.
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        $output = (& claude mcp add hypervm-mcp -s user -- $installed bridge 2>&1 | Out-String)
+        $registered = $LASTEXITCODE
+        $ErrorActionPreference = $previous
+
+        if ($registered -eq 0) {
             Write-Note 'registered as "hypervm-mcp"'
         } elseif ($output -match 'already exists') {
             # Re-running the installer to upgrade is the normal case, and the
@@ -146,7 +155,7 @@ if (-not $SkipClaudeCode) {
             # sends people to fix something that is not broken.
             Write-Note 'already registered as "hypervm-mcp"'
         } else {
-            Write-Warning "Registration failed: $($output.Trim())"
+            Write-Warning "Registration failed (exit $registered): $($output.Trim())"
             Write-Host "    Add it by hand with:"
             Write-Host "    claude mcp add hypervm-mcp -s user -- `"$installed`" bridge"
         }
@@ -164,3 +173,8 @@ if ($doctor -eq 0) {
 }
 Write-Host "Binary:  $installed"
 Write-Host "Check:   hypervm-mcp doctor"
+
+# Say what happened rather than leaving whatever the last native command set.
+# An already-registered MCP server exits non-zero, so a successful install would
+# otherwise look like a failure to anything scripting this.
+exit $doctor
