@@ -31,10 +31,11 @@ const (
 //
 // Two things here are load-bearing for the tests that follow.
 //
-// The image is chosen by name — "Windows Server 2022 SERVERSTANDARD" is the
-// Server Core edition, which installs in a fraction of the time of the Desktop
-// Experience and has everything these tests touch. PowerShell Direct, the VMBus
-// file copy channel and the network stack are all present in Core.
+// The image is chosen by name. On the evaluation media "Windows Server 2022
+// SERVERSTANDARD" is the Desktop Experience edition; the Server Core one is
+// SERVERSTANDARDCORE. The guest therefore has a full desktop, which matters for
+// anything GUI: PowerShell Direct lands in session 0, so a window can only be
+// drawn or captured in the interactive session this edition provides.
 //
 // The administrator password is set and auto-logon is enabled once, because
 // PowerShell Direct authenticates with a password and there is no other way in

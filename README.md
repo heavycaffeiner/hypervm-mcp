@@ -366,7 +366,7 @@ hardware, because on a public server that is a different claim.
 | Network diagnosis | Port probes, and telling "no address reported" apart from "unreachable" |
 | External switch guard | The refusal and its personalised report — but not creation |
 
-**Exercised end to end**, against Windows Server 2022 (Server Core):
+**Exercised end to end**, against Windows Server 2022 (Desktop Experience):
 
 | | |
 |---|---|
