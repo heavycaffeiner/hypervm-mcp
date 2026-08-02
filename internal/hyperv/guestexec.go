@@ -61,7 +61,9 @@ func (c *Client) GuestInvokeCommand(ctx context.Context, vmName, command, userna
         # output and an exit code, not as a thrown error from the transport.
         $ErrorActionPreference = 'Continue'
         $global:LASTEXITCODE = 0
-        $out = & ([ScriptBlock]::Create($command)) 2>&1 | Out-String
+        # -Width, or Out-String wraps at the host's console width and silently
+        # breaks any long line — JSON from the command most of all.
+        $out = & ([ScriptBlock]::Create($command)) 2>&1 | Out-String -Width 16384
         [pscustomobject]@{ output = [string]$out; code = [int]$LASTEXITCODE }
     } -ArgumentList $P.command
 
