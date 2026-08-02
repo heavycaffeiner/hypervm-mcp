@@ -111,6 +111,25 @@ Write-Step 'Checking the installation'
 & $installed doctor
 $doctor = $LASTEXITCODE
 
+# --- PATH -------------------------------------------------------------------
+
+# The binary lives in ProgramData so that only administrators can replace what
+# a LocalSystem service executes — which also means it is nowhere the shell
+# looks. Every instruction that follows says "hypervm-mcp doctor", so put it
+# somewhere that command resolves. User scope, not machine: this needs no
+# elevation and affects nobody else.
+$binDir = Split-Path $installed -Parent
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if (($userPath -split ';') -notcontains $binDir) {
+    Write-Step 'Adding it to your PATH'
+    $updated = if ([string]::IsNullOrWhiteSpace($userPath)) { $binDir }
+               else { $userPath.TrimEnd(';') + ';' + $binDir }
+    [Environment]::SetEnvironmentVariable('Path', $updated, 'User')
+    # The running shell inherited its PATH at start-up and will not see this.
+    $env:Path = $env:Path.TrimEnd(';') + ';' + $binDir
+    Write-Note 'open a new terminal for this to apply everywhere'
+}
+
 # --- Claude Code ------------------------------------------------------------
 
 if (-not $SkipClaudeCode) {
