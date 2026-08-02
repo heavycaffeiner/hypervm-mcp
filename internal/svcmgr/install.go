@@ -70,14 +70,20 @@ func Install(allowedSID string) error {
 	}
 	defer m.Disconnect()
 
-	// Upgrading in place: the running service holds a lock on its own binary, so
-	// it has to stop before the file can be replaced.
+	// Upgrading in place: the running service holds its own binary open, and has
+	// to stop before the file can be replaced and to pick up the new one.
 	if s, err := m.OpenService(config.ServiceName()); err == nil {
 		defer s.Close()
 		if err := stopAndWait(s); err != nil {
 			return err
 		}
 		if err := stageBinary(); err != nil {
+			// The old binary is still intact and the service is stopped because
+			// we stopped it. An upgrade that could not go ahead must not leave
+			// Hyper-V unreachable, so put the previous version back in service.
+			if startErr := startAndWait(s); startErr != nil {
+				return fmt.Errorf("%w (and the previous version would not restart: %v)", err, startErr)
+			}
 			return err
 		}
 		if err := updateExisting(s); err != nil {
@@ -368,11 +374,72 @@ func stageBinary() error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", src, err)
 	}
-	// A running service holds a lock on the old file; the caller stops it first.
-	if err := os.WriteFile(dst, data, 0o700); err != nil {
+
+	sweepStaleBinaries()
+
+	// Written beside the target and renamed over it, so a write that fails
+	// partway leaves a working service behind rather than a truncated image.
+	tmp := dst + ".new"
+	if err := os.WriteFile(tmp, data, 0o700); err != nil {
+		return fmt.Errorf("stage the binary at %s: %w", tmp, err)
+	}
+	defer os.Remove(tmp) // no-op once a rename has moved it
+
+	if err := os.Rename(tmp, dst); err == nil {
+		return nil
+	}
+
+	// The caller stopped the service, but it is not the only thing running this
+	// file: every MCP client holds a `bridge` process open on it, and so does
+	// `update` itself. Windows will not replace a mapped executable image, but
+	// it will rename one. Move the old file aside and put the new one in its
+	// place; whatever is still running carries on from the renamed image until
+	// it exits, and the next upgrade sweeps it up.
+	stray, err := renameAside(dst)
+	if err != nil {
 		return fmt.Errorf("stage the binary at %s: %w", dst, err)
 	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Rename(stray, dst) // put the working binary back
+		return fmt.Errorf("stage the binary at %s: %w", dst, err)
+	}
+	scheduleDelete(stray)
 	return nil
+}
+
+// stalePrefix marks a binary an upgrade displaced but could not yet delete.
+const stalePrefix = ".old-"
+
+// renameAside moves a file to a free name in its own directory, which keeps the
+// rename on one volume: a cross-volume rename is a copy, and Windows refuses
+// that for a running image.
+func renameAside(path string) (string, error) {
+	dir, base := filepath.Split(path)
+	for i := 0; i < 100; i++ {
+		candidate := filepath.Join(dir, fmt.Sprintf("%s%d-%s", stalePrefix, i, base))
+		if _, err := os.Stat(candidate); err == nil {
+			continue // an earlier upgrade's leftover is still there
+		}
+		if err := os.Rename(path, candidate); err != nil {
+			return "", err
+		}
+		return candidate, nil
+	}
+	return "", fmt.Errorf("found no free name to move %s aside", path)
+}
+
+// sweepStaleBinaries deletes what earlier upgrades displaced, now that the
+// processes holding those images have most likely exited. Best effort by
+// design: anything still running stays, and scheduleDelete already arranged for
+// the reboot to take it if nothing else does.
+func sweepStaleBinaries() {
+	matches, err := filepath.Glob(filepath.Join(config.BinDir(), stalePrefix+"*"))
+	if err != nil {
+		return
+	}
+	for _, m := range matches {
+		_ = os.Remove(m)
+	}
 }
 
 func updateExisting(s *mgr.Service) error {
