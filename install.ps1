@@ -118,11 +118,17 @@ if (-not $SkipClaudeCode) {
     if ($claude) {
         Write-Step 'Registering with Claude Code'
         # -s user makes it available in every project rather than just this one.
-        & claude mcp add hypervm-mcp -s user -- $installed bridge
+        $output = & claude mcp add hypervm-mcp -s user -- $installed bridge 2>&1 | Out-String
         if ($LASTEXITCODE -eq 0) {
             Write-Note 'registered as "hypervm-mcp"'
+        } elseif ($output -match 'already exists') {
+            # Re-running the installer to upgrade is the normal case, and the
+            # registration is already correct — reporting that as a failure
+            # sends people to fix something that is not broken.
+            Write-Note 'already registered as "hypervm-mcp"'
         } else {
-            Write-Warning 'Registration failed. Add it by hand with:'
+            Write-Warning "Registration failed: $($output.Trim())"
+            Write-Host "    Add it by hand with:"
             Write-Host "    claude mcp add hypervm-mcp -s user -- `"$installed`" bridge"
         }
     } else {
