@@ -42,12 +42,26 @@ type StaticIPResult struct {
 	Warnings        []string `json:"warnings,omitempty"`
 }
 
-// ifaceNamePattern bounds an interface name to what a real one can contain.
+// ifaceNamePattern bounds a Linux interface name.
 //
-// Unlike the PowerShell path, which passes values as data, the Linux path builds
-// shell command text — so every value that reaches it is validated first. That
-// validation is the whole defence against injection here.
+// The Linux path builds shell command text, so this is the whole defence against
+// injection there. It is deliberately narrow: real Linux interface names are.
 var ifaceNamePattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
+
+// winIfaceNamePattern bounds a Windows adapter name.
+//
+// Windows names are prose — "Ethernet 2", "vEthernet (Default Switch)" — so the
+// Linux pattern rejects almost all of them. What matters here is different: the
+// name is embedded in a single-quoted PowerShell literal, so quotes are doubled
+// when it is written out and this only has to exclude what escaping cannot fix,
+// which is line breaks and control characters.
+var winIfaceNamePattern = regexp.MustCompile(`^[^\x00-\x1f\x7f]{1,128}$`)
+
+// psQuote renders a string as a single-quoted PowerShell literal. Inside one,
+// doubling the quote is the only escape, and nothing else is interpreted.
+func psQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
 
 // SetStaticIP configures a fixed address inside a guest.
 //
@@ -78,8 +92,11 @@ func (d *Dialer) SetStaticIP(ctx context.Context, o StaticIPOptions) (*StaticIPR
 			return nil, hverr.New(hverr.InvalidArgument, "dns server %q is not an IP address", s)
 		}
 	}
-	if o.InterfaceName != "" && !ifaceNamePattern.MatchString(o.InterfaceName) {
-		return nil, hverr.New(hverr.InvalidArgument, "interface_name %q is not a valid interface name", o.InterfaceName)
+	// Only the shape both guest families can agree on is checked here; the
+	// stricter, quoting-specific rule belongs to whichever path runs.
+	if o.InterfaceName != "" && !winIfaceNamePattern.MatchString(o.InterfaceName) {
+		return nil, hverr.New(hverr.InvalidArgument,
+			"interface_name %q contains a line break or control character", o.InterfaceName)
 	}
 	if o.TimeoutSeconds <= 0 {
 		o.TimeoutSeconds = 120
@@ -161,7 +178,7 @@ Remove-NetRoute -InterfaceIndex $nic.ifIndex -DestinationPrefix '0.0.0.0/0' -Con
 			"'"+strings.Join(o.DNSServers, "','")+"'")
 	}
 	if o.InterfaceName != "" {
-		script = "$env:HVM_IFACE = '" + o.InterfaceName + "'\n" + script
+		script = "$env:HVM_IFACE = " + psQuote(o.InterfaceName) + "\n" + script
 	}
 
 	user, pass := o.Username, o.Password
@@ -211,6 +228,11 @@ func (d *Dialer) setStaticIPLinux(ctx context.Context, o StaticIPOptions, res *S
 			return hverr.New(hverr.InvalidArgument,
 				"could not determine the guest's primary interface (got %q); pass interface_name", iface)
 		}
+	} else if !ifaceNamePattern.MatchString(iface) {
+		// This path builds shell command text, so the name has to be narrow
+		// enough that quoting is not the only thing keeping it safe.
+		return hverr.New(hverr.InvalidArgument,
+			"interface_name %q is not a valid Linux interface name", iface)
 	}
 
 	cidr := o.Address + "/" + strconv.Itoa(o.PrefixLength)
