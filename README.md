@@ -38,6 +38,16 @@ hypervm-mcp doctor
 
 **Needs** Windows 10/11 Pro or Server with Hyper-V enabled, and PowerShell 5.1.
 
+To upgrade later:
+
+```powershell
+hypervm-mcp update
+```
+
+Checks the latest release, verifies its checksum, and installs it over the
+current one. Stored credentials, pinned host keys, tunnels and anything you
+edited in `config.json` are kept; only `service uninstall --purge` deletes those.
+
 <details>
 <summary>Other ways to install</summary>
 
@@ -361,6 +371,7 @@ hypervm-mcp bridge                  Relay MCP traffic (run by MCP clients)
 hypervm-mcp service install         Install and start (one UAC prompt)
 hypervm-mcp service uninstall       Remove; --purge also deletes stored data
 hypervm-mcp service start | stop | status
+hypervm-mcp update                  Install the latest release over this one
 hypervm-mcp cred set | list | delete
 hypervm-mcp tunnel list
 hypervm-mcp doctor                  Check the setup and report what to fix

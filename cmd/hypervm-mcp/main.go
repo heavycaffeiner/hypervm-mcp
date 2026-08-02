@@ -21,6 +21,7 @@ Usage:
                                    --purge  also delete stored configuration and credentials
   hypervm-mcp service start|stop     Control the installed service
   hypervm-mcp service status         Report service state and whether this user can reach it
+  hypervm-mcp update                 Install the latest release over this one, keeping credentials
   hypervm-mcp cred set               Store guest credentials for a VM
                                        --vm NAME --user NAME [--ssh-key PATH] [--ssh-port N]
   hypervm-mcp cred list              Show which VMs have credentials (never the secrets)
@@ -53,6 +54,8 @@ func run(args []string) int {
 		return cmdBridge(args[1:])
 	case "service":
 		return cmdService(args[1:])
+	case "update":
+		return cmdUpdate()
 	case "cred":
 		return cmdCred(args[1:])
 	case "doctor":
