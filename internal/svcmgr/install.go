@@ -53,8 +53,15 @@ func Install(allowedSID string) error {
 		return err
 	}
 
-	cfg := config.New(allowedSID)
-	cfg.TailscalePath = detectTailscale()
+	cfg, err := installConfig(allowedSID)
+	if err != nil {
+		return err
+	}
+	// Only overwrite a path that was found: an absent Tailscale does not mean a
+	// hand-configured one is wrong.
+	if ts := detectTailscale(); ts != "" {
+		cfg.TailscalePath = ts
+	}
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("write configuration: %w", err)
 	}
@@ -351,6 +358,32 @@ func prepareDataDir(allowedSID string) error {
 	}
 	// Applied to the root only; the ACEs are inheritable, so children follow.
 	return winsec.SecureDataDir(config.DataDir(), allowedSID)
+}
+
+// installConfig returns the configuration to write for this install.
+//
+// Re-running the installer is how this product upgrades, so it must not quietly
+// revert settings someone edited. Only the allowed SID is taken from the install
+// itself: it identifies whoever is running it, and reinstalling as another user
+// is the documented way to hand the pipe over.
+func installConfig(allowedSID string) (*config.Config, error) {
+	cfg, err := config.Load()
+	switch {
+	case err == nil:
+		cfg.AllowedSID = allowedSID
+		return cfg, nil
+	case errors.Is(err, os.ErrNotExist):
+		return config.New(allowedSID), nil
+	}
+
+	// Unusable, so it has to be replaced. Keep it anyway rather than overwrite
+	// the only copy of whatever was in there.
+	bak := config.ConfigPath() + ".bak"
+	if renErr := os.Rename(config.ConfigPath(), bak); renErr != nil {
+		return nil, fmt.Errorf("%s is unusable (%v) and could not be moved aside: %w",
+			config.ConfigPath(), err, renErr)
+	}
+	return config.New(allowedSID), nil
 }
 
 // stageBinary copies this executable into the locked-down data directory.
