@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Windows only, and not by preference: every package here is behind a
+    # windows build tag and talks to Hyper-V, the SCM, DPAPI or named pipes.
+    # There is nothing meaningful to compile elsewhere.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          check-latest: true
+          cache: true
+
+      - name: Verify formatting
+        shell: pwsh
+        run: |
+          $unformatted = gofmt -l .
+          if ($unformatted) {
+            Write-Error "gofmt would change:`n$unformatted"
+            exit 1
+          }
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      # The end-to-end suite needs Hyper-V, an installed service and a guest VM,
+      # none of which exist on a hosted runner. Those tests gate themselves on
+      # environment variables and skip here; the unit tests are what this checks.
+      - name: Test
+        run: go test ./... -count=1
+
+      - name: Build release binary
+        run: go build -ldflags "-s -w -X main.version=ci-${{ github.sha }}" -o hypervm-mcp.exe ./cmd/hypervm-mcp
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hypervm-mcp-windows-amd64
+          path: hypervm-mcp.exe
+          retention-days: 14
