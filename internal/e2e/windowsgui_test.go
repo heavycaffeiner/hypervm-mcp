@@ -12,6 +12,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -264,6 +265,95 @@ func keepDisplayAwake(t *testing.T, s *mcp.ClientSession, ctx context.Context) {
 	}, nil)
 	// Waking is not instant, and capturing during the fade gives a dim frame.
 	time.Sleep(3 * time.Second)
+}
+
+// TestWindowsGUIMousePosition checks that the pointer lands where it was aimed.
+//
+// The click test proves a button reached a window, which is a different claim: a
+// click can arrive at the wrong place and still land on something. This asks
+// Windows itself where the cursor is, which is the same evidence the Linux test
+// takes from libinput, and it has to be asked from the interactive session —
+// session 0 has a cursor position of its own and it means nothing.
+func TestWindowsGUIMousePosition(t *testing.T) {
+	requireWindowsGuest(t)
+	session, _ := connect(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+
+	keepDisplayAwake(t, session, ctx)
+
+	// The capture reports both its own size and the guest's, and the pointer is
+	// placed against the guest's.
+	var meta struct {
+		Width       int `json:"width"`
+		Height      int `json:"height"`
+		GuestWidth  int `json:"guest_width"`
+		GuestHeight int `json:"guest_height"`
+	}
+	res, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "capture_vm_screen",
+		Arguments: map[string]any{"vm_name": winVMName},
+	})
+	if err != nil || res.IsError {
+		t.Fatalf("capture_vm_screen: %v %v", err, res)
+	}
+	raw, _ := json.Marshal(res.StructuredContent)
+	_ = json.Unmarshal(raw, &meta)
+	t.Logf("capture is %dx%d, guest display is %dx%d",
+		meta.Width, meta.Height, meta.GuestWidth, meta.GuestHeight)
+
+	const readCursor = `
+Add-Type -AssemblyName System.Windows.Forms
+$p = [System.Windows.Forms.Cursor]::Position
+'POS:' + $p.X + ',' + $p.Y`
+
+	for _, target := range []struct{ x, y int }{{100, 100}, {900, 700}, {512, 384}, {950, 50}} {
+		var mouse map[string]any
+		call(t, session, ctx, "send_vm_mouse", map[string]any{
+			"vm_name": winVMName, "x": target.x, "y": target.y,
+			"screen_width": meta.Width, "screen_height": meta.Height,
+		}, &mouse)
+
+		var got map[string]any
+		call(t, session, ctx, "guest_run_in_session", map[string]any{
+			"vm_name": winVMName, "command": readCursor, "timeout_seconds": 120,
+		}, &got)
+
+		x, y := parseCursor(t, fmt.Sprintf("%v", got["stdout"]))
+		wantX, wantY := toInt(mouse["x"]), toInt(mouse["y"])
+		t.Logf("aimed at (%d,%d) -> guest pixel (%d,%d); Windows reports (%d,%d)",
+			target.x, target.y, wantX, wantY, x, y)
+
+		// Absolute positioning should be exact; a pixel of slack covers the
+		// rounding in the scale and nothing else. A loose tolerance would hide a
+		// wrong scale factor, which is the failure worth catching.
+		if abs(x-wantX) > 1 || abs(y-wantY) > 1 {
+			t.Fatalf("the cursor is at (%d,%d) but was sent to (%d,%d)", x, y, wantX, wantY)
+		}
+	}
+	t.Log("the synthetic pointer lands where it is aimed on a Windows guest")
+}
+
+// parseCursor reads the "POS:x,y" line the guest reports.
+func parseCursor(t *testing.T, out string) (int, int) {
+	t.Helper()
+	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "POS:") {
+			continue
+		}
+		parts := strings.Split(strings.TrimPrefix(line, "POS:"), ",")
+		if len(parts) != 2 {
+			break
+		}
+		x, errX := strconv.Atoi(strings.TrimSpace(parts[0]))
+		y, errY := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if errX == nil && errY == nil {
+			return x, y
+		}
+	}
+	t.Fatalf("could not read a cursor position from %q", out)
+	return 0, 0
 }
 
 // TestWindowsGUIMouseAndCapture drives the pointer and reads the result off the

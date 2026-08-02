@@ -75,6 +75,14 @@ func TestInternalSwitchThreeWay(t *testing.T) {
 		_ = tryCall(t, session, bg, "start_vm", map[string]any{"name": rockyVM})
 	}()
 
+	// Start from nothing. Another test may have built this switch and left it,
+	// and creating one that exists is an error — so an interrupted run used to
+	// poison every run after it.
+	if err := tryCall(t, session, ctx, "delete_switch",
+		map[string]any{"name": labSwitch}); err == nil {
+		t.Logf("removed a leftover %s", labSwitch)
+	}
+
 	// An Internal switch touches no physical adapter, so no confirmation and no
 	// disruption to the host's own networking.
 	var sw map[string]any

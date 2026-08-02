@@ -106,11 +106,29 @@ func TestGetVMNotFound(t *testing.T) {
 //
 //	$env:HYPERVM_E2E_VM="Test-VM"
 func TestLifecycle(t *testing.T) {
+	session, ctx := connect(t)
+
+	// Without a name, make one. Power control needs no operating system, so a
+	// VM with no disk exercises every transition — and a test that builds its
+	// own subject cannot be pointed at a guest the rest of the suite depends on,
+	// which is what naming a shared VM here used to do.
 	name := os.Getenv("HYPERVM_E2E_VM")
 	if name == "" {
-		t.Skip("set HYPERVM_E2E_VM to a disposable VM name to run this")
+		name = "hypervm-lifecycle-probe"
+		_ = tryCall(t, session, ctx, "delete_vm",
+			map[string]any{"name": name, "delete_disks": true, "force": true})
+		if err := tryCall(t, session, ctx, "create_vm", map[string]any{
+			"name": name, "generation": 2, "memory_mb": 512, "cpu_count": 1,
+			"secure_boot": "off",
+		}); err != nil {
+			t.Fatalf("create the disposable VM: %v", err)
+		}
+		defer func() {
+			_ = tryCall(t, session, context.Background(), "delete_vm",
+				map[string]any{"name": name, "delete_disks": true, "force": true})
+		}()
+		t.Logf("using a disposable VM named %s", name)
 	}
-	session, ctx := connect(t)
 
 	call := func(tool string, args map[string]any) map[string]any {
 		t.Helper()
@@ -127,6 +145,23 @@ func TestLifecycle(t *testing.T) {
 		t.Logf("%-18s -> state=%v", tool, out["state"])
 		return out
 	}
+
+	// Put the VM back the way it was found. This test ends deliberately with the
+	// VM off, and in a full run everything after it that needs this guest then
+	// fails with an error about a missing address — which describes a symptom
+	// three tests away from its cause.
+	was := call("get_vm", map[string]any{"name": name})["state"]
+	t.Logf("%s is %v; it will be left that way", name, was)
+	defer func() {
+		bg := context.Background()
+		tool := "stop_vm"
+		if was == "Running" || was == "Paused" {
+			tool = "start_vm"
+		}
+		_, _ = session.CallTool(bg, &mcp.CallToolParams{
+			Name: tool, Arguments: map[string]any{"name": name},
+		})
+	}()
 
 	if got := call("start_vm", map[string]any{"name": name}); got["state"] != "Running" {
 		t.Fatalf("after start_vm the VM is %v, want Running", got["state"])
