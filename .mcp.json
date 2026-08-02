@@ -1,7 +1,7 @@
 {
   "mcpServers": {
-    "hypervm-mcp-dev": {
-      "command": "C:\\ProgramData\\hypervm-mcp-dev\\bin\\hypervm-mcp-dev.exe",
+    "hypervm-mcp": {
+      "command": "C:\\ProgramData\\hypervm-mcp\\bin\\hypervm-mcp.exe",
       "args": ["bridge"]
     }
   }
