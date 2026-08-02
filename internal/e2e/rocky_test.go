@@ -78,6 +78,27 @@ func call(t *testing.T, s *mcp.ClientSession, ctx context.Context, tool string, 
 	}
 }
 
+// callList runs a listing tool and decodes the items out of its result.
+//
+// Listing tools answer with {"items": [...], "count": N} rather than a bare
+// array, because an MCP outputSchema has to describe an object and some clients
+// reject a server's entire tool list otherwise. That wrapper is an artefact of
+// the protocol, so it is unwrapped here instead of in every caller.
+func callList(t *testing.T, s *mcp.ClientSession, ctx context.Context, tool string, args map[string]any, out any) {
+	t.Helper()
+	var wrapper struct {
+		Items json.RawMessage `json:"items"`
+		Count int             `json:"count"`
+	}
+	call(t, s, ctx, tool, args, &wrapper)
+	if len(wrapper.Items) == 0 {
+		t.Fatalf("%s returned no items field; the listing shape has changed", tool)
+	}
+	if err := json.Unmarshal(wrapper.Items, out); err != nil {
+		t.Fatalf("%s: decode items: %v", tool, err)
+	}
+}
+
 // tryCall is call for steps that are allowed to fail, such as cleaning up
 // something that may not exist.
 func tryCall(t *testing.T, s *mcp.ClientSession, ctx context.Context, tool string, args map[string]any) error {
@@ -247,7 +268,7 @@ func TestRockyProvision(t *testing.T) {
 	_ = tryCall(t, session, ctx, "ssh_forget_host_key", map[string]any{"name": rockyVM})
 
 	var switches []map[string]any
-	call(t, session, ctx, "list_switches", map[string]any{}, &switches)
+	callList(t, session, ctx, "list_switches", map[string]any{}, &switches)
 	found := false
 	for _, sw := range switches {
 		t.Logf("switch %-24v %v", sw["name"], sw["switch_type"])

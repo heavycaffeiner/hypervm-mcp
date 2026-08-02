@@ -21,7 +21,7 @@ func TestNetworkDiagnosis(t *testing.T) {
 	defer cancel()
 
 	var adapters []map[string]any
-	call(t, session, ctx, "list_physical_adapters", map[string]any{}, &adapters)
+	callList(t, session, ctx, "list_physical_adapters", map[string]any{}, &adapters)
 	for _, a := range adapters {
 		t.Logf("host adapter %-28v %-13v %v Mbps  wireless=%v  switch=%v",
 			a["name"], a["status"], a["link_speed_mbps"], a["is_wireless"], a["bound_to_switch"])
@@ -106,7 +106,7 @@ func TestCheckpointCycle(t *testing.T) {
 	t.Logf("checkpoint %v (%v) taken at %v", made["name"], made["checkpoint_type"], made["created_at"])
 
 	var list []map[string]any
-	call(t, session, ctx, "list_checkpoints", map[string]any{"vm_name": rockyVM}, &list)
+	callList(t, session, ctx, "list_checkpoints", map[string]any{"vm_name": rockyVM}, &list)
 	if !containsCheckpoint(list, snapshot) {
 		t.Fatalf("the checkpoint is not in the list: %v", list)
 	}
@@ -135,7 +135,7 @@ func TestCheckpointCycle(t *testing.T) {
 		"vm_name": rockyVM, "snapshot_name": snapshot,
 	}, nil)
 
-	call(t, session, ctx, "list_checkpoints", map[string]any{"vm_name": rockyVM}, &list)
+	callList(t, session, ctx, "list_checkpoints", map[string]any{"vm_name": rockyVM}, &list)
 	if containsCheckpoint(list, snapshot) {
 		t.Fatalf("the checkpoint is still listed after deletion: %v", list)
 	}

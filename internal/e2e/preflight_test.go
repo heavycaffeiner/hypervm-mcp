@@ -21,7 +21,7 @@ func TestExternalSwitchGuard(t *testing.T) {
 	defer cancel()
 
 	var adapters []map[string]any
-	call(t, session, ctx, "list_physical_adapters", map[string]any{}, &adapters)
+	callList(t, session, ctx, "list_physical_adapters", map[string]any{}, &adapters)
 	var adapter string
 	for _, a := range adapters {
 		if a["status"] == "Up" {
@@ -65,7 +65,7 @@ func TestExternalSwitchGuard(t *testing.T) {
 
 	// The switch must not exist.
 	var switches []map[string]any
-	call(t, session, ctx, "list_switches", map[string]any{}, &switches)
+	callList(t, session, ctx, "list_switches", map[string]any{}, &switches)
 	for _, sw := range switches {
 		if sw["name"] == "hypervm-mcp-guard-check" {
 			t.Fatal("the refused switch was created anyway")

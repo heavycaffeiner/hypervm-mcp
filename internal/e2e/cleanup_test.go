@@ -56,7 +56,7 @@ func TestCleanup(t *testing.T) {
 	}
 
 	var vms []map[string]any
-	call(t, session, ctx, "list_vms", map[string]any{"name": "rocky10-*"}, &vms)
+	callList(t, session, ctx, "list_vms", map[string]any{"name": "rocky10-*"}, &vms)
 	if len(vms) != 0 {
 		t.Errorf("VMs are still present: %v", vms)
 	}

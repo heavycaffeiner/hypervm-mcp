@@ -74,27 +74,8 @@ func TestToolsAreAdvertised(t *testing.T) {
 func TestListVMsThroughBridge(t *testing.T) {
 	session, ctx := connect(t)
 
-	res, err := session.CallTool(ctx, &mcp.CallToolParams{
-		Name:      "list_vms",
-		Arguments: map[string]any{},
-	})
-	if err != nil {
-		t.Fatalf("call: %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("tool reported an error: %s", contentText(res))
-	}
-
-	// StructuredContent arrives as a decoded value, so round-trip it to reach
-	// the concrete shape.
-	raw, err := json.Marshal(res.StructuredContent)
-	if err != nil {
-		t.Fatalf("re-encode structured content: %v", err)
-	}
 	var vms []map[string]any
-	if err := json.Unmarshal(raw, &vms); err != nil {
-		t.Fatalf("decode structured content %s: %v", raw, err)
-	}
+	callList(t, session, ctx, "list_vms", map[string]any{}, &vms)
 	t.Logf("%d VM(s)", len(vms))
 	for _, vm := range vms {
 		t.Logf("  %-30v %-8v gen%v", vm["name"], vm["state"], vm["generation"])

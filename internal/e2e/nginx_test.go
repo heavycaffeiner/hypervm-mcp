@@ -176,7 +176,7 @@ func TestRockyNginxTunnel(t *testing.T) {
 	t.Logf("nginx default page served through the SSH tunnel")
 
 	var tunnels []map[string]any
-	call(t, session, ctx, "list_tunnels", map[string]any{"vm_name": rockyVM}, &tunnels)
+	callList(t, session, ctx, "list_tunnels", map[string]any{"vm_name": rockyVM}, &tunnels)
 	for _, x := range tunnels {
 		t.Logf("tunnel %v: %v conns, %v bytes down", x["id"], x["total_conns"], x["bytes_down"])
 	}
