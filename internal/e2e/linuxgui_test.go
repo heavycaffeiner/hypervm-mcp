@@ -50,9 +50,6 @@ const linuxDesktopScript = `#!/bin/sh
 exec /usr/bin/cage -d -- /usr/bin/xterm -bg blue4 -fg white -fa Monospace -fs 14
 `
 
-// desktopBlue is xterm's blue4 as it survives the capture's 16-bit colour.
-var desktopBlue = struct{ r, g, b uint8 }{0, 0, 139}
-
 // TestRockyGUIMouse checks that a pointer sent to the console arrives in the
 // guest at the coordinates it was aimed at.
 func TestRockyGUIMouse(t *testing.T) {

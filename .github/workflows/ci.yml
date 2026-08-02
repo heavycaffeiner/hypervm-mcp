@@ -17,12 +17,12 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.24'
-          check-latest: true
+          # Follows the module rather than a number pinned here, which drifts.
+          go-version-file: go.mod
           cache: true
 
       - name: Verify formatting
@@ -49,7 +49,7 @@ jobs:
       - name: Build release binary
         run: go build -ldflags "-s -w -X main.version=ci-${{ github.sha }}" -o hypervm-mcp.exe ./cmd/hypervm-mcp
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: hypervm-mcp-windows-amd64
           path: hypervm-mcp.exe

@@ -13,11 +13,6 @@ type createCheckpointInput struct {
 	SnapshotName string `json:"snapshot_name,omitempty" jsonschema:"Name for the checkpoint. Empty lets Hyper-V generate a timestamped one."`
 }
 
-type checkpointInput struct {
-	VMName       string `json:"vm_name" jsonschema:"Exact name of the VM."`
-	SnapshotName string `json:"snapshot_name" jsonschema:"Name of the checkpoint."`
-}
-
 type applyCheckpointInput struct {
 	VMName       string `json:"vm_name" jsonschema:"Exact name of the VM."`
 	SnapshotName string `json:"snapshot_name" jsonschema:"Checkpoint to revert to."`
