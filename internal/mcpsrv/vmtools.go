@@ -48,9 +48,8 @@ func registerVMTools(s *mcp.Server, d *Deps) {
 		Description: "List the virtual machines on this Hyper-V host, sorted by name. " +
 			"A filter that matches nothing returns an empty list rather than an error.",
 		Annotations: readOnly,
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in listVMsInput) (*mcp.CallToolResult, []hyperv.VMSummary, error) {
-		out, err := d.VM.ListVMs(ctx, in.Name)
-		return nil, out, err
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in listVMsInput) (*mcp.CallToolResult, *listOf[hyperv.VMSummary], error) {
+		return list(d.VM.ListVMs(ctx, in.Name))
 	})
 
 	mcp.AddTool(s, &mcp.Tool{

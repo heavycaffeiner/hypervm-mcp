@@ -71,8 +71,8 @@ func registerTunnelTools(s *mcp.Server, d *Deps) {
 		Description: "List the tunnels the service currently holds, including ones opened by another " +
 			"session or restored at startup, with their traffic counters and the last error each hit.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in listTunnelsInput) (*mcp.CallToolResult, []tunnel.Tunnel, error) {
-		return nil, d.Tunnels.List(in.VMName), nil
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in listTunnelsInput) (*mcp.CallToolResult, *listOf[tunnel.Tunnel], error) {
+		return list(d.Tunnels.List(in.VMName), nil)
 	})
 
 	mcp.AddTool(s, &mcp.Tool{

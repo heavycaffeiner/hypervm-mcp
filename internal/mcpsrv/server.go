@@ -71,3 +71,24 @@ func New(version string, d *Deps) *mcp.Server {
 
 // ptr is a helper for the SDK's optional-bool annotation fields.
 func ptr[T any](v T) *T { return &v }
+
+// listOf wraps a slice so a listing tool's output schema is an object.
+//
+// The Go SDK will happily infer an array schema for a slice return, but clients
+// reject a tool whose outputSchema is not an object — Claude Code refuses to
+// load the entire tool list over it, not just the offending tool. Wrapping costs
+// one field and keeps every listing usable.
+type listOf[T any] struct {
+	Items []T `json:"items"`
+	Count int `json:"count"`
+}
+
+func list[T any](items []T, err error) (*mcp.CallToolResult, *listOf[T], error) {
+	if err != nil {
+		return nil, nil, err
+	}
+	if items == nil {
+		items = []T{}
+	}
+	return nil, &listOf[T]{Items: items, Count: len(items)}, nil
+}

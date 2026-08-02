@@ -174,9 +174,8 @@ func registerNetworkTools(s *mcp.Server, d *Deps) {
 			"Prefer a wired one: a wireless adapter bridges by proxying ARP rather than truly " +
 			"bridging, so guests on it often do not appear as independent hosts on the LAN.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, []hyperv.PhysicalAdapter, error) {
-		out, err := d.VM.ListPhysicalAdapters(ctx)
-		return nil, out, err
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, *listOf[hyperv.PhysicalAdapter], error) {
+		return list(d.VM.ListPhysicalAdapters(ctx))
 	})
 
 	mcp.AddTool(s, &mcp.Tool{

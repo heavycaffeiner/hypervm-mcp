@@ -77,9 +77,8 @@ func registerProvisionTools(s *mcp.Server, d *Deps) {
 			"the host, the Default Switch adds outbound internet through NAT, and External puts the " +
 			"guest on the physical LAN with its own address.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, []hyperv.VMSwitch, error) {
-		out, err := d.VM.ListSwitches(ctx)
-		return nil, out, err
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, *listOf[hyperv.VMSwitch], error) {
+		return list(d.VM.ListSwitches(ctx))
 	})
 
 	mcp.AddTool(s, &mcp.Tool{

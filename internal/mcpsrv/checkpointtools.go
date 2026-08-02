@@ -49,9 +49,8 @@ func registerCheckpointTools(s *mcp.Server, d *Deps) {
 		Title:       "List checkpoints",
 		Description: "List a VM's checkpoints oldest first, so each one's parent appears before it.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in vmNameOnlyInput) (*mcp.CallToolResult, []hyperv.Checkpoint, error) {
-		out, err := d.VM.ListCheckpoints(ctx, in.VMName)
-		return nil, out, err
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in vmNameOnlyInput) (*mcp.CallToolResult, *listOf[hyperv.Checkpoint], error) {
+		return list(d.VM.ListCheckpoints(ctx, in.VMName))
 	})
 
 	mcp.AddTool(s, &mcp.Tool{

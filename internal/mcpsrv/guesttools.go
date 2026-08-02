@@ -92,8 +92,7 @@ func registerGuestTools(s *mcp.Server, d *Deps) {
 			"permanent on a guest without the reporting agent — it does not mean the guest is " +
 			"unreachable. Use diagnose_vm_network to tell those apart.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in vmNameOnlyInput) (*mcp.CallToolResult, []hyperv.NetworkAdapter, error) {
-		out, err := d.VM.GetNetworkAdapters(ctx, in.VMName)
-		return nil, out, err
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in vmNameOnlyInput) (*mcp.CallToolResult, *listOf[hyperv.NetworkAdapter], error) {
+		return list(d.VM.GetNetworkAdapters(ctx, in.VMName))
 	})
 }
