@@ -197,6 +197,13 @@ func storeCredentials(t *testing.T, privateKey string) {
 // because one was copied from the other.
 func storeCredentialsFor(t *testing.T, vm, privateKey string) {
 	t.Helper()
+	storeCredentialsAs(t, vm, rockyUser, rockyPassword, privateKey)
+}
+
+// storeCredentialsAs is storeCredentialsFor with the account spelled out, for
+// guests that do not carry the Rocky test account.
+func storeCredentialsAs(t *testing.T, vm, user, password, privateKey string) {
+	t.Helper()
 	pipePath := `\\.\pipe\` + config.DefaultPipeName()
 	if cfg, err := config.Load(); err == nil {
 		pipePath = cfg.PipePath()
@@ -204,8 +211,8 @@ func storeCredentialsFor(t *testing.T, vm, privateKey string) {
 	resp, err := ipc.SendControl(context.Background(), pipePath, map[string]any{
 		"op":              "cred.set",
 		"vm":              vm,
-		"username":        rockyUser,
-		"password":        rockyPassword,
+		"username":        user,
+		"password":        password,
 		"ssh_private_key": privateKey,
 		"ssh_port":        22,
 	})

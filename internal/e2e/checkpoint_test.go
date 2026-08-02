@@ -181,15 +181,27 @@ func sshRunVM(t *testing.T, s *mcp.ClientSession, ctx context.Context, vm, host,
 	return strings.TrimSpace(res.Stdout)
 }
 
-// waitForSSH polls until the guest answers again.
+// waitForSSH polls until the primary VM answers again.
 //
 // This does not use wait_for_guest_ip, because what matters after a revert is
 // that the guest is serving SSH — which is later than having an address, and is
 // the thing the next step actually needs.
 func waitForSSH(t *testing.T, s *mcp.ClientSession, ctx context.Context, host string, timeout time.Duration) {
 	t.Helper()
+	waitForSSHVM(t, s, ctx, rockyVM, host, timeout)
+}
+
+// waitForSSHVM is waitForSSH for any other VM.
+//
+// Credentials and pinned host keys are filed per VM, so probing a clone or a
+// different guest under the primary VM's name authenticates with the wrong key
+// and can never succeed — it just spends the whole timeout failing.
+func waitForSSHVM(t *testing.T, s *mcp.ClientSession, ctx context.Context, vm, host string, timeout time.Duration) {
+	t.Helper()
 	deadline := time.Now().Add(timeout)
-	args := map[string]any{"vm_name": rockyVM, "command": "true", "timeout_seconds": 20}
+	// "exit 0" rather than "true": this also probes Windows guests, where sshd
+	// hands the command to cmd.exe and there is no "true".
+	args := map[string]any{"vm_name": vm, "command": "exit 0", "timeout_seconds": 20}
 	if host != "" {
 		args["host"] = host
 	}

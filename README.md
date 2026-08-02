@@ -140,6 +140,7 @@ Ask Claude Code things like:
 |---|---|
 | `ssh_exec` `ssh_info` `ssh_forget_host_key` | Commands over SSH, host keys pinned per VM |
 | `guest_invoke_command` `guest_copy_file` | Over the VMBus, with no guest network at all |
+| `send_vm_key` | Press keys at the console, before there is a guest to talk to |
 | `get_guest_network` | Adapters and reported addresses |
 | `open_tunnel` `list_tunnels` `close_tunnel` | Forward a host port into a VM |
 | `tailscale_serve` `tailnet_status` | HTTPS at your MagicDNS name |
@@ -365,15 +366,24 @@ hardware, because on a public server that is a different claim.
 | Network diagnosis | Port probes, and telling "no address reported" apart from "unreachable" |
 | External switch guard | The refusal and its personalised report — but not creation |
 
+**Exercised end to end**, against Windows Server 2022 (Server Core):
+
+| | |
+|---|---|
+| Unattended install | `autounattend.xml` on its own small ISO, no console input |
+| `guest_invoke_command` | PowerShell Direct over the VMBus, before the guest had any network service |
+| SSH bootstrap | OpenSSH installed, started, keyed and firewalled entirely over the VMBus, then reached over TCP |
+| `guest_copy_file` | Host to guest over the VMBus; Windows carries the component in the box |
+
+The answer file deliberately does not install OpenSSH. Putting sshd there would
+have made the bootstrap test prove nothing.
+
 **Implemented but never run:**
 
 - **Creating or deleting an External switch.** Running it means disconnecting a
   working machine, so it is left for a deliberate session with console access.
   Its guards and preflight are tested; the creation is not.
-- **`guest_invoke_command`.** PowerShell Direct is Windows-guest only.
 - **`export_vm` / `import_vm` / `resize_vhd` / `convert_vhd`.**
-- **Windows guests generally.** Every guest-facing tool has been run against
-  Linux only.
 
 **Known environment limits, not defects:**
 
