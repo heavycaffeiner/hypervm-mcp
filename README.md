@@ -253,6 +253,29 @@ mouse.
 For a human to look at it, forward RDP instead: `open_tunnel` to guest port 3389,
 `bind_scope=tailnet` if you want to watch from another machine.
 
+### Which of these work on a Linux guest
+
+The console tools do, because they drive Hyper-V's own devices rather than
+anything inside the VM. `capture_vm_screen`, `send_vm_key` and `send_vm_mouse`
+are exercised against Linux as well as Windows.
+
+`guest_run_in_session` does not, and cannot: it is PowerShell Direct and the
+Windows task scheduler, and Hyper-V gives a Linux guest no command channel at
+all. To reach a Linux desktop, use `ssh_exec` with `DISPLAY` and
+`XDG_RUNTIME_DIR` set for the logged-in seat.
+
+Two things surprised us on Rocky 10 and are worth knowing before you copy the
+approach:
+
+- **There is no X server.** RHEL 10 dropped it. The test guest runs `cage`, a
+  kiosk Wayland compositor small enough to justify on a disposable VM, with one
+  terminal in it — no display manager, session manager or window manager.
+- **Wayland will not tell a client where the pointer is**, by design, so the
+  `xdotool getmouselocation` approach does not exist there. The tests read the
+  position from the kernel input device with `libinput` instead. That is a better
+  measurement anyway: it is what the guest received before any display server had
+  an opinion, and it does not change when a distribution changes compositor.
+
 ## Things that will bite you
 
 **Guest IPs need an agent inside the guest.** Hyper-V does not discover them; it
@@ -434,6 +457,9 @@ hardware, because on a public server that is a different claim.
 | Private network | Internal switch, static IPs, host and two guests all reaching each other, plus NAT |
 | Network diagnosis | Port probes, and telling "no address reported" apart from "unreachable" |
 | External switch guard | The refusal and its personalised report — but not creation |
+| Console capture | The text console, and a Wayland session, both read from the host |
+| Console keyboard | Keys reach a Linux text console; the frame changes in response |
+| Console pointer | Four positions across the screen, each confirmed at the guest's own input device |
 
 **Exercised end to end**, against Windows Server 2022 (Desktop Experience):
 
