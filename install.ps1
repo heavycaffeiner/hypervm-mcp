@@ -80,7 +80,12 @@ Invoke-WebRequest -Uri $binaryUrl -OutFile $exe -UseBasicParsing
 # This binary is about to run as LocalSystem, so verify it rather than trust the
 # transfer.
 if ($sumUrl) {
-    $expected = ((Invoke-WebRequest -Uri $sumUrl -UseBasicParsing).Content -split '\s+')[0].Trim().ToLower()
+    # Downloaded to a file rather than read from .Content: GitHub serves release
+    # assets as application/octet-stream, so Invoke-WebRequest hands back a byte
+    # array, and splitting that stringifies it into decimal byte values.
+    $sumFile = Join-Path $DownloadPath 'hypervm-mcp.exe.sha256'
+    Invoke-WebRequest -Uri $sumUrl -OutFile $sumFile -UseBasicParsing
+    $expected = ((Get-Content $sumFile -Raw) -split '\s+')[0].Trim().ToLower()
     $actual = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
     if ($expected -ne $actual) {
         Remove-Item $exe -Force

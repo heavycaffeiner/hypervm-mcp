@@ -45,8 +45,11 @@ jobs:
           go build -ldflags "-s -w -X main.version=${{ steps.version.outputs.tag }}" `
             -o hypervm-mcp.exe ./cmd/hypervm-mcp
           # A checksum users can verify before running a binary as a service.
-          (Get-FileHash hypervm-mcp.exe -Algorithm SHA256).Hash.ToLower() +
-            "  hypervm-mcp.exe" | Out-File -Encoding ascii hypervm-mcp.exe.sha256
+          # Set-Content rather than Out-File: Out-File wraps at the console
+          # width, which would split an 81-character line in two.
+          $hash = (Get-FileHash hypervm-mcp.exe -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path hypervm-mcp.exe.sha256 -Encoding ascii `
+            -Value "$hash  hypervm-mcp.exe"
 
       - name: Publish release
         shell: pwsh
