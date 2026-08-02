@@ -140,7 +140,9 @@ Ask Claude Code things like:
 |---|---|
 | `ssh_exec` `ssh_info` `ssh_forget_host_key` | Commands over SSH, host keys pinned per VM |
 | `guest_invoke_command` `guest_copy_file` | Over the VMBus, with no guest network at all |
-| `send_vm_key` | Press keys at the console, before there is a guest to talk to |
+| `guest_run_in_session` | On the guest's desktop, elevated — where windows are drawn |
+| `capture_vm_screen` | A picture of the console, needing nothing inside the guest |
+| `send_vm_key` `send_vm_mouse` | The console's own keyboard and pointer |
 | `get_guest_network` | Adapters and reported addresses |
 | `open_tunnel` `list_tunnels` `close_tunnel` | Forward a host port into a VM |
 | `tailscale_serve` `tailnet_status` | HTTPS at your MagicDNS name |
@@ -183,6 +185,73 @@ traffic.
 > `preflight_external_switch` shows the same report without changing anything.
 >
 > **This path is unverified** — see [What is verified](#what-is-verified).
+
+## Testing a Windows program that needs administrator
+
+There is no UAC prompt to click, because there is no UAC on this path.
+`guest_invoke_command` reaches the guest over the VMBus, where the session is
+created by a service running as SYSTEM and gets an unfiltered administrator
+token. Installing features, writing under `HKLM`, changing services and setting
+ACLs all just work.
+
+```
+guest_invoke_command  vm_name=win-test  command="Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0"
+```
+
+Two things decide whether you actually get that token:
+
+**Use the built-in Administrator.** It is the one local account never subject to
+token filtering. Any other local administrator may come back with a filtered
+token — it looks like a member of the group right up until something needs the
+privilege. If you must use one, either set `LocalAccountTokenFilterPolicy` to 1
+in the guest, or run through `guest_run_in_session`, which asks for the highest
+run level explicitly.
+
+**Elevation is not the hard part — the session is.** `guest_invoke_command` runs
+in session 0, which Windows reserves for services and which has no desktop. A
+console program does not care. A program that opens a window does: it will be
+drawn nowhere at all.
+
+## Verifying a GUI
+
+Four things are needed, and they are separate problems.
+
+**Somewhere to draw.** Use the Desktop Experience edition, not Server Core, and
+arrange automatic logon so an interactive session exists and survives reboots.
+Turn off the lock screen, the screen saver and display power-down; a blanked
+screen captures as black and takes no clicks, which reads as a broken test rather
+than a sleeping desktop. The answer file in `internal/e2e` does all of this.
+
+**A way to run there.** `guest_run_in_session` registers a scheduled task for the
+logged-on user with an interactive logon type, so the process lands in their
+session, and at the highest run level, so it is elevated. This is the only way
+here to drive a program that both needs administrator and shows a window.
+
+**A way to see.** `capture_vm_screen` reads the console frame buffer from the
+host. It needs no agent, no network and no operating system, so it is the only
+tool that sees a firmware prompt, a boot menu, a stop error, or an installer
+waiting on a dialog — situations where nothing inside the guest is left to ask.
+The image comes back inline, so a client that can look at pictures does not have
+to go and open a file.
+
+**A way to act.** `send_vm_key` and `send_vm_mouse` drive the console's own
+keyboard and pointer, so they work on whatever is on screen. Give mouse
+coordinates in pixels along with the size of the capture they were read from;
+Hyper-V positions the pointer as a fraction of the screen, so a point taken from
+a small thumbnail lands correctly on a large desktop. The pointer is bound by the
+guest's integration services during boot — before that there is a keyboard but no
+mouse.
+
+> [!IMPORTANT]
+> **Read screens, do not compare them.** The capture is a scaled thumbnail, and
+> pixels move with resolution, theme, DPI and font. Decide whether a GUI is
+> correct by querying its automation tree from `guest_run_in_session`
+> (`UIAutomationClient`, or FlaUI); use screenshots to find out what went wrong.
+> The end-to-end test does exactly this: it clicks and types through the console,
+> then reads the text back out of the control.
+
+For a human to look at it, forward RDP instead: `open_tunnel` to guest port 3389,
+`bind_scope=tailnet` if you want to watch from another machine.
 
 ## Things that will bite you
 
@@ -374,9 +443,18 @@ hardware, because on a public server that is a different claim.
 | `guest_invoke_command` | PowerShell Direct over the VMBus, before the guest had any network service |
 | SSH bootstrap | OpenSSH installed, started, keyed and firewalled entirely over the VMBus, then reached over TCP |
 | `guest_copy_file` | Host to guest over the VMBus; Windows carries the component in the box |
+| `set_guest_static_ip` | The Windows branch, on a second adapter named `Ethernet 2` |
+| Session bridge | The same query answered as session 0 over PowerShell Direct and session 1 through `guest_run_in_session` |
+| Elevation | An unfiltered administrator token in that session, proven by writing under `HKLM` |
+| `capture_vm_screen` | A 1024x768 desktop, checked for colour spread rather than file size |
+| `send_vm_mouse` + `send_vm_key` | Clicked into Notepad and typed; the text read back out of the automation tree |
 
 The answer file deliberately does not install OpenSSH. Putting sshd there would
 have made the bootstrap test prove nothing.
+
+The GUI tests assert on the automation tree, never on pixels. A screenshot is
+saved on the way past either way, because when something does go wrong it is the
+only record of what the guest was actually showing.
 
 **Implemented but never run:**
 

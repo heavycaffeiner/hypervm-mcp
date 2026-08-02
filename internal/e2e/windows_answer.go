@@ -144,11 +144,16 @@ func autounattendXML(admin, password string) string {
         </AdministratorPassword>
       </UserAccounts>
 
-      <!-- PowerShell Direct authenticates with a password and needs the account
-           to have logged on at least once, so sign in automatically one time. -->
+      <!-- Automatic logon, and not just once.
+           PowerShell Direct needs the account to have signed in at least one
+           time, which a single logon would satisfy. The high count is for
+           something else: anything graphical has to run in an interactive
+           session, and one only exists while somebody is logged on. With
+           LogonCount 1 the desktop would vanish at the first reboot and every
+           GUI test after it would fail with nowhere to draw. -->
       <AutoLogon>
         <Enabled>true</Enabled>
-        <LogonCount>1</LogonCount>
+        <LogonCount>1000</LogonCount>
         <Username>` + xmlEscape(admin) + `</Username>
         <Password>
           <Value>` + xmlEscape(password) + `</Value>
@@ -164,6 +169,23 @@ func autounattendXML(admin, password string) string {
           <Order>1</Order>
           <CommandLine>cmd /c echo ready &gt; C:\hypervm-mcp-ready.txt</CommandLine>
           <Description>Signal readiness</Description>
+        </SynchronousCommand>
+        <!-- A locked or blanked screen captures as black and takes no clicks,
+             which reads as a broken test rather than a sleeping desktop. -->
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>2</Order>
+          <CommandLine>reg add "HKCU\Control Panel\Desktop" /v ScreenSaveActive /t REG_SZ /d 0 /f</CommandLine>
+          <Description>Never blank the screen</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>3</Order>
+          <CommandLine>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableLockWorkstation /t REG_DWORD /d 1 /f</CommandLine>
+          <Description>Never lock the workstation</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>4</Order>
+          <CommandLine>powercfg /change monitor-timeout-ac 0</CommandLine>
+          <Description>Never turn the display off</Description>
         </SynchronousCommand>
         <!-- Deliberately NOT installing OpenSSH here. Bootstrapping sshd through
              PowerShell Direct, over the VMBus and with no guest network, is one
