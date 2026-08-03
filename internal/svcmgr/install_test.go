@@ -6,9 +6,31 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
+
+// The cleanup helper's creation flags are load-bearing, and getting them wrong
+// is not a crash but a console window flashing on the user's desktop once per
+// retry, which is why they are pinned here rather than left to a comment.
+func TestCleanupCommandKeepsItsConsoleHidden(t *testing.T) {
+	cmd := cleanupCommand(`C:\Windows\Temp\cleanup.cmd`)
+
+	if cmd.SysProcAttr.CreationFlags&windows.DETACHED_PROCESS != 0 {
+		t.Error("DETACHED_PROCESS leaves the helper without a console, so every console " +
+			"program it starts is given a visible one of its own")
+	}
+	if cmd.SysProcAttr.CreationFlags&windows.CREATE_NO_WINDOW == 0 {
+		t.Error("without CREATE_NO_WINDOW the helper's own console is visible")
+	}
+	if !slices.Contains(cmd.Args, "/d") {
+		t.Error("without /d the helper runs the user's cmd AutoRun, which may start a " +
+			"console program this has no say over")
+	}
+}
 
 // The upgrade path rests on one Windows behaviour: a running executable image
 // cannot be overwritten, but it can be renamed. Every MCP client keeps a

@@ -199,18 +199,25 @@ func purgeDataDir() error {
 	return nil
 }
 
-// scheduleDelete removes a file once this process lets go of it.
+// markForDeleteAtReboot has Windows unlink a file at the next restart.
 //
-// A detached cmd retries for about a minute, which covers the moment between
-// this process returning and Windows releasing the image. If that never runs,
-// the file is marked for deletion at the next restart, so nothing is left
-// behind either way. Both are best effort: the file is outside the product
-// directory by now and holds nothing.
-func scheduleDelete(path string) {
-	// Ignored deliberately: this is the backstop, and the helper below is what
-	// normally does the work.
+// This is all that can be done about a file some other process still has open,
+// and it is the only disposal an upgrade needs: the stale image it leaves is
+// held by an MCP client's bridge, which can outlive any wait worth making.
+// Best effort, and nothing depends on it: the file holds nothing by now.
+func markForDeleteAtReboot(path string) {
 	_ = windows.MoveFileEx(windows.StringToUTF16Ptr(path), nil,
 		windows.MOVEFILE_DELAY_UNTIL_REBOOT)
+}
+
+// scheduleDelete removes a file once this process lets go of it.
+//
+// For the one case where waiting pays: uninstalling renames the running program
+// out of the way, and Windows releases that image within moments of this process
+// exiting. A background cmd retries for about a minute and stops the moment the
+// file goes, with the reboot backstop covering the helper never running at all.
+func scheduleDelete(path string) {
+	markForDeleteAtReboot(path)
 
 	// Written to a file rather than passed as one long argument, because cmd
 	// re-parses quotes in a way that is painful to get right through exec.
@@ -227,13 +234,29 @@ func scheduleDelete(path string) {
 		return
 	}
 
-	cmd := exec.Command("cmd", "/c", script)
-	// No console and no wait: this outlives the caller on purpose.
+	// No wait: this outlives the caller on purpose.
+	_ = cleanupCommand(script).Start()
+}
+
+// cleanupCommand builds the helper process, and the flags are the point of it.
+//
+// A hidden console, and deliberately not DETACHED_PROCESS. Detaching leaves the
+// helper with no console at all, and Windows then hands every console program it
+// starts a brand new one, window and all: HideWindow applies to the process
+// created here and never to its children. `ping`, which the loop sleeps with,
+// therefore put a console window on the user's desktop once per iteration. A
+// hidden console is inherited, so nothing shows.
+//
+// /d for the same reason one step removed: without it the helper also runs
+// whatever the user has in cmd's AutoRun, which is free to start a console
+// program of its own.
+func cleanupCommand(script string) *exec.Cmd {
+	cmd := exec.Command("cmd", "/d", "/c", script)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		HideWindow:    true,
-		CreationFlags: windows.DETACHED_PROCESS | windows.CREATE_NO_WINDOW,
+		CreationFlags: windows.CREATE_NO_WINDOW,
 	}
-	_ = cmd.Start()
+	return cmd
 }
 
 // Start starts an installed service.
@@ -436,7 +459,11 @@ func stageBinary() error {
 		_ = os.Rename(stray, dst) // put the working binary back
 		return fmt.Errorf("stage the binary at %s: %w", dst, err)
 	}
-	scheduleDelete(stray)
+	// No waiting for this one. Whatever holds the old image is a bridge process
+	// that lives as long as its MCP client does, so there is nothing to wait
+	// for: sweepStaleBinaries collects it at the next upgrade, and the reboot
+	// takes it if that never comes.
+	markForDeleteAtReboot(stray)
 	return nil
 }
 
