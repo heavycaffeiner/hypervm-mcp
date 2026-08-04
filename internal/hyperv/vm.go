@@ -106,6 +106,7 @@ const detailProjection = `
         checkpoint_file_location = [string]$vm.SnapshotFileLocation
         smart_paging_file_path   = [string]$vm.SmartPagingFilePath
         processor_count          = [int]$cpu.Count
+        nested_virtualization    = [bool]$cpu.ExposeVirtualizationExtensions
         memory_startup           = [int64]$mem.Startup
         dynamic_memory_enabled   = [bool]$mem.DynamicMemoryEnabled
         memory_minimum           = [int64]$mem.Minimum
@@ -228,6 +229,45 @@ func (c *Client) ResumeVM(ctx context.Context, name string) (*VMSummary, error) 
     $result = Get-VM -Name $P.name | ` + summaryProjection
 
 	return c.runSummary(ctx, 0, script, map[string]any{"name": name})
+}
+
+// SetNestedVirtualization exposes the host's virtualization extensions to a
+// guest, so the guest can run a hypervisor of its own.
+//
+// Two prerequisites are enforced here rather than by Hyper-V, which was measured
+// to enforce neither:
+//
+// The VM must be Off. Set-VMProcessor accepts the change on a running VM,
+// reports success, and does not apply it: the setting reads back unchanged, then
+// still unchanged once the VM stops. Passing that through would mean telling a
+// caller nested virtualization is on when nothing happened.
+//
+// Dynamic memory is turned off when enabling. A guest hypervisor needs its
+// memory backed for real, and Hyper-V will start the VM with both settings on
+// and leave the breakage to appear inside the guest. Turning it off here is the
+// only way through this server, which has no tool for memory, and the returned
+// detail reports the new value.
+func (c *Client) SetNestedVirtualization(ctx context.Context, name string, enabled bool) (*VMDetail, error) {
+	if name == "" {
+		return nil, hverr.New(hverr.InvalidArgument, "name is required")
+	}
+
+	const script = requireVM + `
+    if ($vm.State -ne 'Off') {
+        throw "HVERR:VM_WRONG_STATE|'$($P.name)' is $($vm.State); nested virtualization can only be changed while the VM is Off. Hyper-V accepts the change on a running VM and then silently ignores it."
+    }
+    if ($P.enabled -and (Get-VMMemory -VM $vm).DynamicMemoryEnabled) {
+        Set-VMMemory -VM $vm -DynamicMemoryEnabled $false | Out-Null
+    }
+    Set-VMProcessor -VM $vm -ExposeVirtualizationExtensions ([bool]$P.enabled) | Out-Null
+` + detailProjection
+
+	var out VMDetail
+	if err := c.r.RunTimeoutInto(ctx, 2*time.Minute, script,
+		map[string]any{"name": name, "enabled": enabled}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // runSummary is the shared tail of every state transition: run, decode, and turn

@@ -6,6 +6,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/heavycaffeiner/hypervm-mcp/internal/hverr"
 	"github.com/heavycaffeiner/hypervm-mcp/internal/hyperv"
 )
 
@@ -28,6 +29,13 @@ type stopVMInput struct {
 type suspendVMInput struct {
 	Name string `json:"name" jsonschema:"Exact name of the VM."`
 	Mode string `json:"mode,omitempty" jsonschema:"\"save\" writes VM state to disk and frees its memory; \"pause\" leaves it resident. Default \"save\"."`
+}
+
+type setNestedVirtualizationInput struct {
+	Name string `json:"name" jsonschema:"Exact name of the VM."`
+	// A pointer so that omitting it is an error rather than a silent request to
+	// turn the feature off.
+	Enabled *bool `json:"enabled" jsonschema:"true lets the guest run its own hypervisor; false takes that away."`
 }
 
 type waitForGuestIPInput struct {
@@ -115,6 +123,26 @@ func registerVMTools(s *mcp.Server, d *Deps) {
 		Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: ptr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in vmNameInput) (*mcp.CallToolResult, *hyperv.VMSummary, error) {
 		out, err := d.VM.ResumeVM(ctx, in.Name)
+		return nil, out, err
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:  "set_vm_nested_virtualization",
+		Title: "Set nested virtualization",
+		Description: "Expose the host's virtualization extensions to a guest, so the guest can run its own " +
+			"hypervisor: Hyper-V inside the VM, WSL2, Windows Sandbox, Docker Desktop, or an Android " +
+			"emulator. The VM must be Off, and this reports an error if it is not, because Hyper-V " +
+			"accepts the change on a running VM and then silently ignores it. Enabling also turns " +
+			"dynamic memory off, since a guest hypervisor needs its memory really backed; the returned " +
+			"detail shows the new value. For nested guests to reach the network, the outer VM's adapter " +
+			"also needs MAC spoofing, which set_vm_network turns on.",
+		Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: ptr(false)},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setNestedVirtualizationInput) (*mcp.CallToolResult, *hyperv.VMDetail, error) {
+		if in.Enabled == nil {
+			return nil, nil, hverr.New(hverr.InvalidArgument,
+				"enabled is required: true to let the guest run its own hypervisor, false to take that away")
+		}
+		out, err := d.VM.SetNestedVirtualization(ctx, in.Name, *in.Enabled)
 		return nil, out, err
 	})
 

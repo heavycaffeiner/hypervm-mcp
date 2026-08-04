@@ -47,7 +47,11 @@ type VMDetail struct {
 	CheckpointFileLocation string `json:"checkpoint_file_location"`
 	SmartPagingFilePath    string `json:"smart_paging_file_path"`
 
-	ProcessorCount       int   `json:"processor_count"`
+	ProcessorCount int `json:"processor_count"`
+
+	// NestedVirtualization reports whether the guest can run its own hypervisor.
+	NestedVirtualization bool `json:"nested_virtualization"`
+
 	MemoryStartup        int64 `json:"memory_startup"`
 	DynamicMemoryEnabled bool  `json:"dynamic_memory_enabled"`
 	MemoryMinimum        int64 `json:"memory_minimum"`

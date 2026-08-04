@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/heavycaffeiner/hypervm-mcp/internal/config"
+	"github.com/heavycaffeiner/hypervm-mcp/internal/hverr"
 	"github.com/heavycaffeiner/hypervm-mcp/internal/psrun"
 )
 
@@ -91,4 +92,89 @@ func TestIntegrationGetVMNotFound(t *testing.T) {
 		t.Fatal("expected an error")
 	}
 	t.Logf("error: %v", err)
+}
+
+// TestIntegrationNestedVirtualization covers the two prerequisites Hyper-V was
+// measured not to enforce: it accepts the change on a running VM and ignores it,
+// and it starts a VM that has both nested virtualization and dynamic memory.
+// Both are this package's job, so both are checked against the real thing.
+func TestIntegrationNestedVirtualization(t *testing.T) {
+	c := integrationClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	const name = "hypervm-mcp-nested-test"
+	// Dynamic memory on, so that enabling has something to turn off.
+	vm, err := c.CreateVM(ctx, CreateVMOptions{
+		Name: name, MemoryMB: 1024, DynamicMemory: true, CPUCount: 2,
+		VHDSizeMB: 1024, CreateParents: true,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() {
+		// Its own context: the test's may already be spent by the time this runs.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if _, err := c.DeleteVM(ctx, name, true, true); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	})
+	if vm.NestedVirtualization {
+		t.Fatal("a fresh VM should not have nested virtualization on")
+	}
+	if !vm.DynamicMemoryEnabled {
+		t.Fatal("wanted dynamic memory on, so enabling has something to turn off")
+	}
+
+	on, err := c.SetNestedVirtualization(ctx, name, true)
+	if err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if !on.NestedVirtualization {
+		t.Error("nested virtualization did not come on")
+	}
+	if on.DynamicMemoryEnabled {
+		t.Error("dynamic memory is still on; a guest hypervisor needs its memory backed")
+	}
+
+	// The ordinary detail path has to agree, or get_vm would contradict the tool
+	// that just reported success.
+	got, err := c.GetVM(ctx, name)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !got.NestedVirtualization {
+		t.Error("get_vm does not report nested virtualization as on")
+	}
+
+	if _, err := c.StartVM(ctx, name); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	_, err = c.SetNestedVirtualization(ctx, name, false)
+	if err == nil {
+		t.Fatal("changing it on a running VM was allowed; Hyper-V ignores that silently")
+	}
+	if !hverr.Is(err, hverr.VMWrongState) {
+		t.Errorf("got %v, want %s", err, hverr.VMWrongState)
+	}
+	t.Logf("running VM refused: %v", err)
+
+	// Refusing must also mean changing nothing.
+	if got, err = c.GetVM(ctx, name); err != nil {
+		t.Fatalf("get: %v", err)
+	} else if !got.NestedVirtualization {
+		t.Error("the refused call turned it off anyway")
+	}
+
+	if _, err := c.StopVM(ctx, name, true, 0); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	off, err := c.SetNestedVirtualization(ctx, name, false)
+	if err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if off.NestedVirtualization {
+		t.Error("nested virtualization did not go off")
+	}
 }

@@ -178,6 +178,15 @@ One you create has none: `set_switch_host_address` for the host,
 disk exclusively and a differencing disk cannot read a parent held that way. The
 clone fails with a file-in-use error that never mentions differencing disks.
 
+**Nested virtualization only takes on a stopped VM, and Hyper-V will not tell
+you.** `Set-VMProcessor -ExposeVirtualizationExtensions` on a running VM reports
+success and changes nothing: the setting reads back unchanged, and still
+unchanged once the VM stops. `set_vm_nested_virtualization` refuses a VM that is
+not Off rather than pass that success on. It also turns dynamic memory off, which
+Hyper-V does not require but a guest hypervisor does; the returned detail shows
+the new value. And nested guests reach the network only if the outer VM's adapter
+allows MAC spoofing, which is `set_vm_network`'s `mac_spoofing`.
+
 **Paths are opened by the service, not by you.** It runs as LocalSystem with its
 own logon session, so your mapped drive letters do not exist for it. Use UNC and
 grant `HOSTNAME$` access to the share. Every path is checked before anything is
@@ -196,6 +205,7 @@ created.
 | `start_vm` `stop_vm` `restart_vm` | Power control; graceful unless `force` |
 | `suspend_vm` `resume_vm` | Save to disk or pause in memory |
 | `wait_for_guest_ip` | Wait until the guest is actually reachable |
+| `set_vm_nested_virtualization` | Let the guest run its own hypervisor: Hyper-V, WSL2, Docker Desktop, Windows Sandbox |
 | `create_checkpoint` `list_checkpoints` | Snapshot and inspect |
 | `apply_checkpoint` | Revert, discarding everything since |
 | `delete_checkpoint` | Remove one and wait for its disk to merge |
@@ -542,6 +552,7 @@ With **no guest at all**:
 | | |
 |---|---|
 | Generation 1 and 2 | Both firmware screens captured, both took keys, both refused the pointer with a reason |
+| Nested virtualization | Enabled on a stopped VM with dynamic memory turned off alongside, read back through `get_vm`, then a running VM refused and left untouched |
 
 And `rename_vm`: credentials and the pinned host key both confirmed under the new
 name — the key by comparing fingerprints, because a lost pin is silent and would
@@ -560,6 +571,10 @@ when something does go wrong it is the only record of what the guest was showing
   working machine, so it is left for a deliberate session with console access. Its
   guards and preflight are tested; the creation is not.
 - **`export_vm` / `import_vm` / `resize_vhd` / `convert_vhd`.**
+- **A hypervisor actually running inside a guest.** What is measured is the
+  setting and its guards, not WSL2 or Hyper-V booting in there. That also needs a
+  host CPU that can do it, and a Hyper-V host reports its own virtualization
+  flags as false, so there is no preflight worth trusting to offer.
 - **Guests other than the two above.** Other Windows versions and Linux
   distributions should work by construction, since the guest-side requirement is
   only a driver both families ship in-tree — but that is an expectation, not a
