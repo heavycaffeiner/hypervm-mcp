@@ -339,8 +339,15 @@ type SecuritySettings struct {
 
 // IntegrationService is one of the guest-side services Hyper-V offers over the
 // VMBus. Status comes from the guest, so it stays empty until one is running.
+//
+// Key is the stable name to set the service by. Name is whatever Hyper-V calls
+// it in the host's display language, which is a label and nothing more: on a
+// Korean host it reads "시간 동기화" where the documentation says "Time
+// Synchronization".
 type IntegrationService struct {
+	Key     string `json:"key"`
 	Name    string `json:"name"`
+	ID      string `json:"id,omitempty"`
 	Enabled bool   `json:"enabled"`
 	Status  string `json:"status,omitempty"`
 }
@@ -348,11 +355,14 @@ type IntegrationService struct {
 // ComPort is one virtual serial port, backed by a host named pipe when attached.
 // Number is what SetVMComPort addresses the port by; Name is what Hyper-V calls
 // it, which is where the number is derived from.
+// Path and DebuggerMode are always emitted, empty included. An unattached port
+// is a real state rather than a missing field, and omitting it would leave a
+// caller that merges responses unable to tell "disconnected" from "unchanged".
 type ComPort struct {
 	Number       int    `json:"number"`
 	Name         string `json:"name,omitempty"`
-	Path         string `json:"path,omitempty"`
-	DebuggerMode string `json:"debugger_mode,omitempty"`
+	Path         string `json:"path"`
+	DebuggerMode string `json:"debugger_mode"`
 }
 
 // VideoSettings is the console's framebuffer. It decides what capture_vm_screen
@@ -375,12 +385,13 @@ type DiskSettings struct {
 	SupportPersistentReservations bool   `json:"support_persistent_reservations"`
 }
 
-// DVDDrive is one virtual optical drive, empty when no ISO is loaded.
+// DVDDrive is one virtual optical drive. An empty Path means no ISO is loaded,
+// which is reported rather than omitted for the same reason as ComPort's.
 type DVDDrive struct {
 	ControllerType     string `json:"controller_type"`
 	ControllerNumber   int    `json:"controller_number"`
 	ControllerLocation int    `json:"controller_location"`
-	Path               string `json:"path,omitempty"`
+	Path               string `json:"path"`
 }
 
 // AdapterSettings is one virtual NIC with every per-port feature Hyper-V offers,

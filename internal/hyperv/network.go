@@ -501,7 +501,9 @@ func (c *Client) SetVMNetworkAdvanced(ctx context.Context, o AdapterFeatureOptio
     if ($a.Count -gt 1) { Set-VMNetworkAdapter @a | Out-Null }
 
     if ($P.set_trunk) {
-        $allowed = @($P.trunk_allowed | ForEach-Object { [int]$_ })
+        # -AllowedVlanIdList is typed as a string and parsed as a range list,
+        # so an int array binds as System.Object[] and is rejected.
+        $allowed = (@($P.trunk_allowed | ForEach-Object { [int]$_ }) -join ',')
         Set-VMNetworkAdapterVlan -VMNetworkAdapter $nic -Trunk -NativeVlanId ([int]$P.trunk_native) -AllowedVlanIdList $allowed | Out-Null
     } elseif ($a.Count -le 1) {
         throw "HVERR:INVALID_ARGUMENT|nothing to change; pass at least one adapter feature"

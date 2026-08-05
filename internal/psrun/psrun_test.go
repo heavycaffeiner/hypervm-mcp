@@ -5,6 +5,8 @@ package psrun
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,6 +172,44 @@ func TestArraysInsideObjectsRoundTrip(t *testing.T) {
 	if len(got.Many) != 2 {
 		t.Errorf("many = %v, want [a b]", got.Many)
 	}
+}
+
+// A script far past what a command line can hold must still run.
+//
+// Windows caps a command line at 32767 characters and -EncodedCommand spends
+// about 2.7 of them per character of script, so passing the script that way put
+// a ceiling near 12 KB on any single operation. The projection that reads a VM's
+// full settings crossed it, and the failure was invisible: CreateProcess refuses
+// before PowerShell starts, so there was no output, no exit code and no message
+// to explain it. The script travels on stdin now, which has no such cap.
+func TestScriptLongerThanACommandLine(t *testing.T) {
+	r := newTestRunner(t)
+
+	var padding strings.Builder
+	for i := 0; padding.Len() < 64*1024; i++ {
+		fmt.Fprintf(&padding, "    # filler line %d, standing in for a long projection\n", i)
+	}
+	script := padding.String() + "$result = $P.name"
+
+	var got string
+	if err := r.RunInto(context.Background(), script,
+		map[string]any{"name": "still here"}, &got); err != nil {
+		t.Fatalf("run a %d-character script: %v", len(script), err)
+	}
+	if got != "still here" {
+		t.Fatalf("got %q, want %q", got, "still here")
+	}
+}
+
+// A script with a syntax error must be reported, not silently skipped. It is
+// compiled at run time now, so this is the moment that would go quiet.
+func TestSyntaxErrorIsReported(t *testing.T) {
+	r := newTestRunner(t)
+	_, err := r.Run(context.Background(), `$result = @{ unclosed = `, nil)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	t.Logf("reported as: %v", err)
 }
 
 func TestNestedStructureSurvives(t *testing.T) {

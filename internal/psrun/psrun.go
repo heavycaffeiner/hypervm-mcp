@@ -9,6 +9,13 @@
 //   - Scripts are wrapped in an envelope that reports success or failure as a
 //     structured field. PowerShell's exit code alone is not trustworthy: a
 //     non-terminating error leaves it at 0.
+//
+// The script travels on stdin beside its arguments, and only a fixed bootstrap
+// is passed on the command line. That is not a stylistic choice: Windows caps a
+// command line at 32767 characters, and -EncodedCommand spends about 2.7 of them
+// per character of script, so a projection of any size walks into the cap. What
+// makes that worth avoiding at the root is how it fails — CreateProcess refuses
+// before PowerShell starts, so there is no output at all to explain it.
 package psrun
 
 import (
@@ -17,7 +24,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
-	"fmt"
 	"os/exec"
 	"strings"
 	"time"
@@ -26,11 +32,15 @@ import (
 	"github.com/heavycaffeiner/hypervm-mcp/internal/hverr"
 )
 
-// envelope wraps a script so that success and failure are both reported on
-// stdout as JSON, in UTF-8 regardless of the console code page.
+// envelope reads a script and its arguments from stdin, runs the script, and
+// reports success or failure on stdout as JSON, in UTF-8 regardless of the
+// console code page.
 //
 // Scripts assign their output to $result. They must not use `return`, which
 // would exit before the envelope is written.
+//
+// The script is dot-sourced rather than invoked with &, so it runs in this scope
+// and its assignment to $result is the same variable the envelope reads.
 const envelope = `$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 # Hyper-V and .NET localize their messages to the host's display language.
@@ -39,11 +49,11 @@ $ProgressPreference = 'SilentlyContinue'
 [System.Threading.Thread]::CurrentThread.CurrentUICulture = [System.Globalization.CultureInfo]::GetCultureInfo('en-US')
 $__enc = [System.Text.UTF8Encoding]::new($false)
 $__reader = [System.IO.StreamReader]::new([Console]::OpenStandardInput(), $__enc)
-$__raw = $__reader.ReadToEnd()
-$P = if ($__raw) { $__raw | ConvertFrom-Json } else { $null }
+$__payload = $__reader.ReadToEnd() | ConvertFrom-Json
+$P = $__payload.args
 $result = $null
 try {
-%s
+    . ([scriptblock]::Create($__payload.script))
     $__envelope = @{ ok = $true; data = $result }
 } catch {
     $__envelope = @{
@@ -111,13 +121,12 @@ func (r *Runner) RunTimeout(ctx context.Context, timeout time.Duration, script s
 		return nil, hverr.Wrap(hverr.OperationTimeout, ctx.Err(), "cancelled while waiting for a PowerShell slot")
 	}
 
-	var stdin []byte
-	if args != nil {
-		b, err := json.Marshal(args)
-		if err != nil {
-			return nil, hverr.Wrap(hverr.Internal, err, "encode script arguments")
-		}
-		stdin = b
+	stdin, err := json.Marshal(struct {
+		Script string `json:"script"`
+		Args   any    `json:"args"`
+	}{Script: script, Args: args})
+	if err != nil {
+		return nil, hverr.Wrap(hverr.Internal, err, "encode script arguments")
 	}
 
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -125,7 +134,7 @@ func (r *Runner) RunTimeout(ctx context.Context, timeout time.Duration, script s
 
 	cmd := exec.CommandContext(runCtx, r.exe,
 		"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-		"-EncodedCommand", encodeCommand(fmt.Sprintf(envelope, script)))
+		"-EncodedCommand", encodeCommand(envelope))
 	cmd.Stdin = bytes.NewReader(stdin)
 
 	var stdout, stderr bytes.Buffer
@@ -152,6 +161,12 @@ func (r *Runner) RunTimeout(ctx context.Context, timeout time.Duration, script s
 			detail = truncate(stdout.String(), 4096)
 		}
 		if runErr != nil {
+			// The launch error itself is the detail when the process wrote
+			// nothing, which is exactly the case where there is otherwise
+			// nothing at all to go on.
+			if detail == "" {
+				detail = runErr.Error()
+			}
 			return nil, hverr.Wrap(hverr.PowerShellError, runErr,
 				"PowerShell produced no usable output").WithDetail(truncate(detail, 4096))
 		}

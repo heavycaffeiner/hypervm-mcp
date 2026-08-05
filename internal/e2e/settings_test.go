@@ -6,6 +6,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // The settings tools are checked by writing a value and reading it back through
@@ -81,6 +83,7 @@ type vmSettings struct {
 	} `json:"video"`
 
 	IntegrationServices []struct {
+		Key     string `json:"key"`
 		Name    string `json:"name"`
 		Enabled bool   `json:"enabled"`
 	} `json:"integration_services"`
@@ -107,9 +110,12 @@ type vmSettings struct {
 	} `json:"network_adapters"`
 }
 
-func (s *vmSettings) service(name string) (bool, bool) {
+// service looks a component up by its stable key, never by its name: Hyper-V
+// names these in the host's display language, so on a Korean host the name is
+// "시간 동기화" and matching "Time Synchronization" finds nothing.
+func (s *vmSettings) service(key string) (bool, bool) {
 	for _, svc := range s.IntegrationServices {
-		if svc.Name == name {
+		if svc.Key == key {
 			return svc.Enabled, true
 		}
 	}
@@ -117,6 +123,19 @@ func (s *vmSettings) service(name string) (bool, bool) {
 }
 
 const mib = 1024 * 1024
+
+// settingsOf runs a tool and decodes its result into a fresh value.
+//
+// Decoding into a reused struct would be wrong in a way that is easy to miss:
+// encoding/json merges into whatever is already there, so a field the server
+// omits keeps the value the previous response left behind. That turns a
+// successful change into an apparent failure.
+func settingsOf(t *testing.T, s *mcp.ClientSession, ctx context.Context, tool string, args map[string]any) vmSettings {
+	t.Helper()
+	var out vmSettings
+	call(t, s, ctx, tool, args, &out)
+	return out
+}
 
 func TestSettingsGeneration2(t *testing.T) {
 	session, _ := connect(t)
@@ -134,8 +153,7 @@ func TestSettingsGeneration2(t *testing.T) {
 			map[string]any{"name": settingsVM, "delete_disks": true, "force": true})
 	}()
 
-	var s vmSettings
-	call(t, session, ctx, "get_vm_settings", map[string]any{"name": settingsVM}, &s)
+	s := settingsOf(t, session, ctx, "get_vm_settings", map[string]any{"name": settingsVM})
 	if s.Firmware == nil {
 		t.Fatal("a Generation 2 VM must report firmware")
 	}
@@ -144,11 +162,11 @@ func TestSettingsGeneration2(t *testing.T) {
 	}
 
 	t.Run("memory", func(t *testing.T) {
-		call(t, session, ctx, "set_vm_memory", map[string]any{
+		s = settingsOf(t, session, ctx, "set_vm_memory", map[string]any{
 			"name": settingsVM, "dynamic": true, "startup_mb": 1024,
 			"minimum_mb": 512, "maximum_mb": 2048,
 			"buffer_percent": 25, "priority_weight": 60,
-		}, &s)
+		})
 		if !s.Memory.DynamicEnabled {
 			t.Error("dynamic memory did not turn on")
 		}
@@ -171,19 +189,19 @@ func TestSettingsGeneration2(t *testing.T) {
 
 		// The three bounds constrain each other, so moving startup past the old
 		// maximum only works because they are applied together.
-		call(t, session, ctx, "set_vm_memory", map[string]any{
+		s = settingsOf(t, session, ctx, "set_vm_memory", map[string]any{
 			"name": settingsVM, "startup_mb": 3072, "maximum_mb": 4096,
-		}, &s)
+		})
 		if s.Memory.StartupBytes != 3072*mib || s.Memory.MaximumBytes != 4096*mib {
 			t.Errorf("startup=%d maximum=%d after a combined raise", s.Memory.StartupBytes, s.Memory.MaximumBytes)
 		}
 	})
 
 	t.Run("processor", func(t *testing.T) {
-		call(t, session, ctx, "set_vm_processor", map[string]any{
+		s = settingsOf(t, session, ctx, "set_vm_processor", map[string]any{
 			"name": settingsVM, "count": 2, "reserve_percent": 10,
 			"maximum_percent": 90, "relative_weight": 200, "hw_thread_count_per_core": 1,
-		}, &s)
+		})
 		if s.Processor.Count != 2 || s.Processor.ReservePercent != 10 ||
 			s.Processor.MaximumPercent != 90 || s.Processor.RelativeWeight != 200 ||
 			s.Processor.HwThreadCountPerCore != 1 {
@@ -192,10 +210,10 @@ func TestSettingsGeneration2(t *testing.T) {
 	})
 
 	t.Run("firmware", func(t *testing.T) {
-		call(t, session, ctx, "set_vm_firmware", map[string]any{
+		s = settingsOf(t, session, ctx, "set_vm_firmware", map[string]any{
 			"name": settingsVM, "secure_boot": "linux",
 			"boot_order": []string{"network", "disk"}, "pause_after_boot_failure": true,
-		}, &s)
+		})
 		if s.Firmware.SecureBoot != "On" {
 			t.Errorf("secure boot is %q, want On", s.Firmware.SecureBoot)
 		}
@@ -213,8 +231,7 @@ func TestSettingsGeneration2(t *testing.T) {
 		// A token reported by the read must put that same device back.
 		if len(s.Firmware.BootOrder) >= 2 {
 			tokens := []string{s.Firmware.BootOrder[1].Token, s.Firmware.BootOrder[0].Token}
-			call(t, session, ctx, "set_vm_firmware",
-				map[string]any{"name": settingsVM, "boot_order": tokens}, &s)
+			s = settingsOf(t, session, ctx, "set_vm_firmware", map[string]any{"name": settingsVM, "boot_order": tokens})
 			if s.Firmware.BootOrder[0].Kind != "disk" {
 				t.Errorf("resending tokens did not reorder: %+v", s.Firmware.BootOrder)
 			}
@@ -222,12 +239,12 @@ func TestSettingsGeneration2(t *testing.T) {
 	})
 
 	t.Run("options", func(t *testing.T) {
-		call(t, session, ctx, "set_vm_options", map[string]any{
+		s = settingsOf(t, session, ctx, "set_vm_options", map[string]any{
 			"name": settingsVM, "notes": "written by the e2e suite",
 			"automatic_start_action": "Nothing", "automatic_start_delay_seconds": 30,
 			"automatic_stop_action": "ShutDown", "checkpoint_type": "Standard",
 			"automatic_checkpoints_enabled": false, "lock_on_disconnect": true,
-		}, &s)
+		})
 		o := s.Options
 		if o.Notes != "written by the e2e suite" || o.AutomaticStartAction != "Nothing" ||
 			o.AutomaticStartDelaySeconds != 30 || o.AutomaticStopAction != "ShutDown" ||
@@ -237,20 +254,26 @@ func TestSettingsGeneration2(t *testing.T) {
 	})
 
 	t.Run("integration services", func(t *testing.T) {
-		call(t, session, ctx, "set_vm_integration_services", map[string]any{
+		s = settingsOf(t, session, ctx, "set_vm_integration_services", map[string]any{
 			"name": settingsVM, "guest_service_interface": true, "time_synchronization": false,
-		}, &s)
-		if on, ok := s.service("Guest Service Interface"); !ok || !on {
+		})
+		if on, ok := s.service("guest_service_interface"); !ok || !on {
 			t.Error("Guest Service Interface did not turn on")
 		}
-		if on, ok := s.service("Time Synchronization"); !ok || on {
+		if on, ok := s.service("time_synchronization"); !ok || on {
 			t.Error("Time Synchronization did not turn off")
+		}
+		// Every component must resolve to a key, or a service this server cannot
+		// name is a service it cannot set.
+		for _, svc := range s.IntegrationServices {
+			if svc.Key == "" {
+				t.Errorf("no key for integration service %q; its component GUID is unmapped", svc.Name)
+			}
 		}
 	})
 
 	t.Run("security", func(t *testing.T) {
-		call(t, session, ctx, "set_vm_security",
-			map[string]any{"name": settingsVM, "tpm_enabled": true}, &s)
+		s = settingsOf(t, session, ctx, "set_vm_security", map[string]any{"name": settingsVM, "tpm_enabled": true})
 		if !s.Security.TPMEnabled {
 			t.Error("the virtual TPM did not turn on")
 		}
@@ -262,9 +285,9 @@ func TestSettingsGeneration2(t *testing.T) {
 	})
 
 	t.Run("video", func(t *testing.T) {
-		call(t, session, ctx, "set_vm_video", map[string]any{
+		s = settingsOf(t, session, ctx, "set_vm_video", map[string]any{
 			"name": settingsVM, "horizontal_resolution": 1280, "vertical_resolution": 800,
-		}, &s)
+		})
 		if s.Video == nil {
 			t.Fatal("no video settings reported")
 		}
@@ -276,8 +299,7 @@ func TestSettingsGeneration2(t *testing.T) {
 
 	t.Run("com port", func(t *testing.T) {
 		const pipe = `\\.\pipe\hypervm-settings-probe-com1`
-		call(t, session, ctx, "set_vm_com_port",
-			map[string]any{"name": settingsVM, "number": 1, "path": pipe}, &s)
+		s = settingsOf(t, session, ctx, "set_vm_com_port", map[string]any{"name": settingsVM, "number": 1, "path": pipe})
 		var found bool
 		for _, c := range s.ComPorts {
 			if c.Number == 1 && c.Path == pipe {
@@ -295,8 +317,7 @@ func TestSettingsGeneration2(t *testing.T) {
 			t.Error("a file path was accepted as a COM port backing")
 		}
 
-		call(t, session, ctx, "set_vm_com_port",
-			map[string]any{"name": settingsVM, "number": 1, "detach": true}, &s)
+		s = settingsOf(t, session, ctx, "set_vm_com_port", map[string]any{"name": settingsVM, "number": 1, "detach": true})
 		for _, c := range s.ComPorts {
 			if c.Number == 1 && c.Path != "" {
 				t.Errorf("com port 1 is still attached to %q", c.Path)
@@ -309,10 +330,10 @@ func TestSettingsGeneration2(t *testing.T) {
 			t.Skip("the probe VM has no disk")
 		}
 		path := s.HardDrives[0].Path
-		call(t, session, ctx, "set_vm_disk_settings", map[string]any{
+		s = settingsOf(t, session, ctx, "set_vm_disk_settings", map[string]any{
 			"name": settingsVM, "path": path, "maximum_iops": 500,
 			"to_controller_location": 3,
-		}, &s)
+		})
 		if s.HardDrives[0].MaximumIOPS != 500 {
 			t.Errorf("maximum IOPS is %d, want 500", s.HardDrives[0].MaximumIOPS)
 		}
@@ -325,19 +346,19 @@ func TestSettingsGeneration2(t *testing.T) {
 		if len(s.NetworkAdapters) == 0 {
 			t.Skip("the probe VM has no adapter")
 		}
-		call(t, session, ctx, "set_vm_network_advanced", map[string]any{
+		s = settingsOf(t, session, ctx, "set_vm_network_advanced", map[string]any{
 			"vm_name": settingsVM, "dhcp_guard": true, "router_guard": true,
 			"device_naming": true, "maximum_bandwidth_mbps": 100,
-		}, &s)
+		})
 		a := s.NetworkAdapters[0]
 		if !a.DHCPGuard || !a.RouterGuard || !a.DeviceNaming || a.MaximumBandwidthMbps != 100 {
 			t.Errorf("adapter features read back as %+v", a)
 		}
 
-		call(t, session, ctx, "set_vm_network_advanced", map[string]any{
+		s = settingsOf(t, session, ctx, "set_vm_network_advanced", map[string]any{
 			"vm_name": settingsVM, "trunk_native_vlan_id": 1,
 			"trunk_allowed_vlan_ids": []int{10, 20},
-		}, &s)
+		})
 		if s.NetworkAdapters[0].VLANMode != "Trunk" || s.NetworkAdapters[0].TrunkNativeVLANID != 1 {
 			t.Errorf("trunk read back as mode=%q native=%d",
 				s.NetworkAdapters[0].VLANMode, s.NetworkAdapters[0].TrunkNativeVLANID)
@@ -352,8 +373,7 @@ func TestSettingsGeneration2(t *testing.T) {
 		}
 
 		name := s.NetworkAdapters[0].Name
-		call(t, session, ctx, "remove_vm_network_adapter",
-			map[string]any{"vm_name": settingsVM, "adapter_name": name}, &s)
+		s = settingsOf(t, session, ctx, "remove_vm_network_adapter", map[string]any{"vm_name": settingsVM, "adapter_name": name})
 		if len(s.NetworkAdapters) != 0 {
 			t.Errorf("the adapter survived removal: %+v", s.NetworkAdapters)
 		}
@@ -379,8 +399,7 @@ func TestSettingsGeneration1(t *testing.T) {
 			map[string]any{"name": name, "delete_disks": true, "force": true})
 	}()
 
-	var s vmSettings
-	call(t, session, ctx, "get_vm_settings", map[string]any{"name": name}, &s)
+	s := settingsOf(t, session, ctx, "get_vm_settings", map[string]any{"name": name})
 	if s.BIOS == nil {
 		t.Fatal("a Generation 1 VM must report a BIOS")
 	}
@@ -390,8 +409,7 @@ func TestSettingsGeneration1(t *testing.T) {
 
 	// Naming one class is enough: the rest keep their current order behind it,
 	// because the BIOS wants a full permutation and a caller should not have to.
-	call(t, session, ctx, "set_vm_firmware",
-		map[string]any{"name": name, "boot_order": []string{"dvd"}, "num_lock": true}, &s)
+	s = settingsOf(t, session, ctx, "set_vm_firmware", map[string]any{"name": name, "boot_order": []string{"dvd"}, "num_lock": true})
 	if len(s.BIOS.StartupOrder) != 4 {
 		t.Errorf("the startup order has %d entries, want all 4: %v",
 			len(s.BIOS.StartupOrder), s.BIOS.StartupOrder)

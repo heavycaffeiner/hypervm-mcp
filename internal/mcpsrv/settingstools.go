@@ -37,7 +37,7 @@ type setVMProcessorInput struct {
 
 type setVMFirmwareInput struct {
 	Name                  string   `json:"name" jsonschema:"Exact name of the VM."`
-	BootOrder             []string `json:"boot_order,omitempty" jsonschema:"Devices to try, in order. Each entry is \"disk\", \"dvd\", \"network\" or \"floppy\", optionally narrowed with a colon: \"disk:D:\\\\VMs\\\\os.vhdx\" or \"network:Network Adapter\". A bare class means every device of that class, in its current order. On a Generation 1 VM the classes are all that exist and anything you leave out keeps its current place at the end."`
+	BootOrder             []string `json:"boot_order,omitempty" jsonschema:"Devices to try, in order. Each entry is \"disk\", \"dvd\", \"network\", \"floppy\" or \"file\", optionally narrowed with a colon: \"disk:D:\\\\VMs\\\\os.vhdx\" or \"network:Network Adapter\". A bare class means every device of that class, in its current order. Simplest is to take the token get_vm_settings reports for each entry and send them back in the order you want. On a Generation 1 VM only the classes exist, and anything you leave out keeps its current place at the end."`
 	SecureBoot            string   `json:"secure_boot,omitempty" jsonschema:"\"windows\", \"linux\" or \"off\". Generation 2 only. A Linux distribution needs \"linux\": it is signed by the third-party UEFI CA, which the Windows template does not trust, and boots to a security violation otherwise."`
 	ConsoleMode           string   `json:"console_mode,omitempty" jsonschema:"Where the firmware draws: \"Default\" to the video device, \"COM1\" or \"COM2\" to a serial port, \"None\" nowhere. Generation 2 only."`
 	PauseAfterBootFailure *bool    `json:"pause_after_boot_failure,omitempty" jsonschema:"Stop at the firmware screen when nothing boots instead of retrying, so capture_vm_screen can show why. Generation 2 only."`
@@ -261,7 +261,11 @@ func registerSettingsTools(s *mcp.Server, d *Deps) {
 			"worth turning off deliberately: a domain controller must not take its clock from the " +
 			"host, and anything testing clock skew cannot have it corrected underneath.\n\n" +
 			"A setting here only enables the host's side. The guest also needs the matching daemon, " +
-			"which on Linux means hyperv-daemons.",
+			"which on Linux means hyperv-daemons.\n\n" +
+			"Services are addressed by a fixed key, not by the name Hyper-V shows. Hyper-V names " +
+			"them in the host's display language, so on a Korean host the shutdown service is called " +
+			"\"시스템 종료\"; get_vm_settings reports both, and the key is the half that is the same " +
+			"everywhere.",
 		Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: ptr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setVMIntegrationServicesInput) (*mcp.CallToolResult, *hyperv.VMSettings, error) {
 		out, err := d.VM.SetVMIntegrationServices(ctx, hyperv.IntegrationOptions{

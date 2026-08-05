@@ -10,6 +10,27 @@ import (
 	"github.com/heavycaffeiner/hypervm-mcp/internal/winpath"
 )
 
+// integrationComponentKeys maps each integration service's stable component GUID
+// onto the key this server names it by.
+//
+// Hyper-V names these services in the host's display language, not in English:
+// on a Korean host Get-VMIntegrationService answers "시간 동기화" where the
+// documentation says "Time Synchronization", and Enable-VMIntegrationService
+// -Name will only match the localized form. The envelope's en-US pin does not
+// help, because the names come from the management service rather than from this
+// thread. The component GUID is the same everywhere, so it is what both reading
+// and writing match on, and the localized name is reported alongside as a label.
+const integrationComponentKeys = `
+    $__icKeys = [ordered]@{
+        '6C09BB55-D683-4DA0-8931-C9BF705F6480' = 'guest_service_interface'
+        '84EAAE65-2F2E-45F5-9BB5-0E857DC8EB47' = 'heartbeat'
+        '2A34B1C2-FD73-4043-8A5B-DD2159BC743F' = 'key_value_pair_exchange'
+        '9F8233AC-BE49-4C79-8EE3-E7E1985B2077' = 'shutdown'
+        '2497F4DE-E9FA-4204-80E4-4B75C46419C0' = 'time_synchronization'
+        '5CED1297-4598-4915-A5FC-AD21BB4D02A4' = 'vss'
+    }
+`
+
 // settingsProjection fills $result with a VMSettings. It expects $vm to be set
 // and re-reads it first, so it is equally correct after a mutation.
 //
@@ -17,7 +38,7 @@ import (
 // projection. Get-VMSecurity, Get-VMKeyProtector and Get-VMVideo each depend on
 // host features and VM generation, and a host that cannot answer one of them
 // should still be able to report everything else.
-const settingsProjection = `
+const settingsProjection = integrationComponentKeys + `
     $vm  = Get-VM -Id $vm.Id
     $mem = Get-VMMemory -VM $vm
     $cpu = Get-VMProcessor -VM $vm
@@ -46,8 +67,9 @@ const settingsProjection = `
                 } elseif ($src.FirmwarePath) { $kind = 'file' }
 
                 $token = $kind
-                if (($kind -eq 'disk' -or $kind -eq 'dvd') -and $path) { $token = $kind + ':' + $path }
-                if ($kind -eq 'network' -and $adapter)                 { $token = 'network:' + $adapter }
+                if (($kind -eq 'disk' -or $kind -eq 'dvd') -and $path)  { $token = $kind + ':' + $path }
+                if ($kind -eq 'network' -and $adapter)                  { $token = 'network:' + $adapter }
+                if ($kind -eq 'file' -and $src.FirmwarePath)            { $token = 'file:' + $src.FirmwarePath }
 
                 [ordered]@{
                     kind          = $kind
@@ -93,11 +115,20 @@ const settingsProjection = `
         }
     } catch { }
 
-    $svcs = @(Get-VMIntegrationService -VM $vm | ForEach-Object { [ordered]@{
-        name    = [string]$_.Name
-        enabled = [bool]$_.Enabled
-        status  = [string]$_.PrimaryStatusDescription
-    } })
+    $svcs = @(Get-VMIntegrationService -VM $vm | ForEach-Object {
+        $comp = $_
+        $icKey = ''
+        foreach ($g in $__icKeys.Keys) {
+            if ($comp.Id -like ('*' + $g + '*')) { $icKey = $__icKeys[$g] }
+        }
+        [ordered]@{
+            key     = $icKey
+            name    = [string]$comp.Name
+            id      = [string]$comp.Id
+            enabled = [bool]$comp.Enabled
+            status  = [string]$comp.PrimaryStatusDescription
+        }
+    })
 
     # A COM port object carries no number of its own, only a name like "COM 1",
     # while Set-VMComPort addresses ports by number. The digit in the name is
@@ -372,7 +403,15 @@ func (c *Client) SetVMProcessor(ctx context.Context, o ProcessorOptions) (*VMSet
 }
 
 // bootTokenKinds are the device classes a boot_order entry may name.
-var bootTokenKinds = map[string]bool{"disk": true, "dvd": true, "network": true, "floppy": true}
+//
+// "file" is here because a Generation 2 VM's boot order really does contain
+// entries that are not devices at all: an installed Linux leaves one pointing at
+// its own shim on the EFI system partition. Without it, reading a boot order and
+// sending it back unchanged would fail on any such VM, which is the one thing
+// the token round trip exists to make safe.
+var bootTokenKinds = map[string]bool{
+	"disk": true, "dvd": true, "network": true, "floppy": true, "file": true,
+}
 
 // SetVMFirmware changes what a VM boots from, and how.
 //
@@ -468,6 +507,13 @@ func (c *Client) SetVMFirmware(ctx context.Context, o FirmwareOptions) (*VMSetti
                     'network' {
                         $match = @(Get-VMNetworkAdapter -VM $vm)
                         if ($qual) { $match = @($match | Where-Object { $_.Name -eq $qual }) }
+                    }
+                    'file' {
+                        # A firmware entry is not a device, so it can only be
+                        # carried over from the order the VM already has.
+                        $match = @((Get-VMFirmware -VM $vm).BootOrder |
+                                   Where-Object { $_.BootType.ToString() -eq 'File' })
+                        if ($qual) { $match = @($match | Where-Object { $_.FirmwarePath -eq $qual }) }
                     }
                     default {
                         throw "HVERR:INVALID_ARGUMENT|boot_order entry '$tok' names a device class a Generation 2 VM does not have"
@@ -662,30 +708,22 @@ func (c *Client) SetVMOptions(ctx context.Context, o VMOptionsUpdate) (*VMSettin
 	return c.runSettings(ctx, script, args)
 }
 
-// integrationServiceNames maps this tool's field names onto the names Hyper-V
-// files each service under. Hyper-V matches them literally, spaces and all.
-var integrationServiceNames = map[string]string{
-	"guest_service_interface": "Guest Service Interface",
-	"heartbeat":               "Heartbeat",
-	"key_value_pair_exchange": "Key-Value Pair Exchange",
-	"shutdown":                "Shutdown",
-	"time_synchronization":    "Time Synchronization",
-	"vss":                     "VSS",
-}
-
 // SetVMIntegrationServices turns the guest-facing VMBus services on or off.
 //
 // Two of these are what other tools in this server depend on: Guest Service
 // Interface carries guest_copy_file, and Key-Value Pair Exchange is how Hyper-V
 // learns the addresses wait_for_guest_ip waits for. Turning either off breaks
 // the corresponding tool for that VM, which is why they are reported back.
+//
+// Services are matched by component GUID rather than by name, because Hyper-V
+// names them in the host's display language. See integrationComponentKeys.
 func (c *Client) SetVMIntegrationServices(ctx context.Context, o IntegrationOptions) (*VMSettings, error) {
 	if o.VMName == "" {
 		return nil, hverr.New(hverr.InvalidArgument, "name is required")
 	}
 
 	type change struct {
-		Name    string `json:"name"`
+		Key     string `json:"key"`
 		Enabled bool   `json:"enabled"`
 	}
 	var changes []change
@@ -701,7 +739,7 @@ func (c *Client) SetVMIntegrationServices(ctx context.Context, o IntegrationOpti
 		{"vss", o.VSS},
 	} {
 		if f.v != nil {
-			changes = append(changes, change{Name: integrationServiceNames[f.key], Enabled: *f.v})
+			changes = append(changes, change{Key: f.key, Enabled: *f.v})
 		}
 	}
 	if len(changes) == 0 {
@@ -709,16 +747,21 @@ func (c *Client) SetVMIntegrationServices(ctx context.Context, o IntegrationOpti
 			"nothing to change; pass at least one integration service")
 	}
 
-	const script = `
+	const script = integrationComponentKeys + `
+    $components = @(Get-VMIntegrationService -VM $vm)
     foreach ($c in @($P.changes)) {
-        # -Name filters by wildcard, so an unknown name yields nothing rather
-        # than an error, and would otherwise pass silently.
-        $svc = @(Get-VMIntegrationService -VM $vm -Name $c.name)
-        if ($svc.Count -eq 0) {
-            throw "HVERR:INVALID_ARGUMENT|'$($P.name)' has no integration service named '$($c.name)'"
+        $svc = $null
+        foreach ($comp in $components) {
+            foreach ($g in $__icKeys.Keys) {
+                if ($__icKeys[$g] -eq $c.key -and $comp.Id -like ('*' + $g + '*')) { $svc = $comp }
+            }
         }
-        if ($c.enabled) { Enable-VMIntegrationService  -VMIntegrationService $svc[0] | Out-Null }
-        else            { Disable-VMIntegrationService -VMIntegrationService $svc[0] | Out-Null }
+        if (-not $svc) {
+            $have = @($components | ForEach-Object { $_.Name }) -join ', '
+            throw "HVERR:INVALID_ARGUMENT|'$($P.name)' has no integration service for '$($c.key)' (it offers: $have)"
+        }
+        if ($c.enabled) { Enable-VMIntegrationService  -VMIntegrationService $svc | Out-Null }
+        else            { Disable-VMIntegrationService -VMIntegrationService $svc | Out-Null }
     }
 `
 	return c.runSettings(ctx, script, map[string]any{"name": o.VMName, "changes": changes})
@@ -864,9 +907,14 @@ func (c *Client) SetVMComPort(ctx context.Context, o ComPortOptions) (*VMSetting
 	}
 	setBool(args, "debugger", o.DebuggerMode)
 
+	// Detaching passes $null rather than the empty string. Set-VMComPort declares
+	// both AllowNull and AllowEmptyString, but an empty string is accepted and
+	// leaves the pipe attached; $null is what actually disconnects the port.
 	const script = `
     $a = @{ VM = $vm; Number = [int]$P.number }
-    if ($P.set_path)     { $a['Path']         = [string]$P.path }
+    if ($P.set_path) {
+        if ($P.path) { $a['Path'] = [string]$P.path } else { $a['Path'] = $null }
+    }
     if ($P.set_debugger) { $a['DebuggerMode'] = $(if ($P.debugger) { 'On' } else { 'Off' }) }
     Set-VMComPort @a | Out-Null
 `

@@ -574,6 +574,8 @@ With **no guest at all**:
 |---|---|
 | Generation 1 and 2 | Both firmware screens captured, both took keys, both refused the pointer with a reason |
 | Nested virtualization | Enabled on a stopped VM with dynamic memory turned off alongside, read back through `get_vm`, then a running VM refused and left untouched |
+| Every VM setting | Each one written and read back through the same vocabulary: memory, processor, boot order, secure boot, automatic actions, checkpoint policy, integration services, vTPM, console resolution, serial port, disk QoS and placement, adapter guards, bandwidth and VLAN trunk |
+| Both firmware families | UEFI boot order set by device token on Generation 2; the BIOS permutation completed from one named class on Generation 1, with secure boot and a vTPM refused there for the right reason |
 
 And `rename_vm`: credentials and the pinned host key both confirmed under the new
 name — the key by comparing fingerprints, because a lost pin is silent and would
@@ -588,14 +590,6 @@ when something does go wrong it is the only record of what the guest was showing
 <details>
 <summary><b>Implemented but never run</b></summary>
 
-- **The settings tools** — `get_vm_settings` and every `set_vm_*` alongside it,
-  plus `set_vm_network_advanced` and `remove_vm_network_adapter`. Their PowerShell
-  parses, and every property each one reads was checked against the Hyper-V
-  assembly's own type definitions, so no field name is a guess. What has not
-  happened is a run against a live hypervisor. `TestSettingsGeneration1` and
-  `TestSettingsGeneration2` build their own disposable VMs and assert each setting
-  by reading it back through the same vocabulary that wrote it; until those have
-  been run, treat this whole group as unproven.
 - **Creating or deleting an External switch.** Running it means disconnecting a
   working machine, so it is left for a deliberate session with console access. Its
   guards and preflight are tested; the creation is not.
