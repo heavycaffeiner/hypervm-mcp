@@ -35,6 +35,32 @@ type setVMNetworkInput struct {
 	CreateAdapter bool   `json:"create_adapter,omitempty" jsonschema:"Add an adapter if the VM has none."`
 }
 
+type setVMNetworkAdvancedInput struct {
+	VMName      string `json:"vm_name" jsonschema:"Exact name of the VM."`
+	AdapterName string `json:"adapter_name,omitempty" jsonschema:"Which adapter to change, by name. Defaults to the VM's first."`
+
+	DHCPGuard     *bool  `json:"dhcp_guard,omitempty" jsonschema:"Drop DHCP offers sent by this guest, so a VM cannot hand out addresses on the network it sits on."`
+	RouterGuard   *bool  `json:"router_guard,omitempty" jsonschema:"Drop router advertisements sent by this guest."`
+	PortMirroring string `json:"port_mirroring,omitempty" jsonschema:"\"Source\" copies this adapter's traffic to whichever adapter on the same switch is set to \"Destination\". \"None\" turns it off."`
+	DeviceNaming  *bool  `json:"device_naming,omitempty" jsonschema:"Pass the adapter's Hyper-V name through to the guest, so the guest can tell which NIC is which."`
+	AllowTeaming  *bool  `json:"allow_teaming,omitempty" jsonschema:"Let the guest put this adapter in a NIC team of its own."`
+
+	VMQWeight         *int `json:"vmq_weight,omitempty" jsonschema:"Claim on the switch's virtual machine queues, 0 to 100. 0 disables VMQ for this adapter."`
+	IPsecOffloadMaxSA *int `json:"ipsec_offload_max_sa,omitempty" jsonschema:"How many IPsec security associations the adapter may offload to hardware. 0 disables offload."`
+
+	MinimumBandwidthMbps   *int `json:"minimum_bandwidth_mbps,omitempty" jsonschema:"Bandwidth reserved for this adapter, in Mbps. 0 reserves nothing."`
+	MaximumBandwidthMbps   *int `json:"maximum_bandwidth_mbps,omitempty" jsonschema:"Bandwidth cap for this adapter, in Mbps. 0 is unlimited."`
+	MinimumBandwidthWeight *int `json:"minimum_bandwidth_weight,omitempty" jsonschema:"Relative claim on bandwidth under contention, 0 to 100. An alternative to minimum_bandwidth_mbps, not a companion to it."`
+
+	TrunkNativeVLANID   *int  `json:"trunk_native_vlan_id,omitempty" jsonschema:"VLAN carried untagged on a trunk. Give this together with trunk_allowed_vlan_ids."`
+	TrunkAllowedVLANIDs []int `json:"trunk_allowed_vlan_ids,omitempty" jsonschema:"VLANs carried tagged on a trunk. Give this together with trunk_native_vlan_id."`
+}
+
+type removeVMNetworkAdapterInput struct {
+	VMName      string `json:"vm_name" jsonschema:"Exact name of the VM."`
+	AdapterName string `json:"adapter_name" jsonschema:"Name of the adapter to remove, exactly as get_vm_settings reports it."`
+}
+
 type preflightInput struct {
 	NetAdapterName string `json:"net_adapter_name" jsonschema:"Physical adapter that would be bound. See list_physical_adapters."`
 }
@@ -274,6 +300,58 @@ func registerNetworkTools(s *mcp.Server, d *Deps) {
 			MACSpoofing:   in.MACSpoofing,
 			CreateAdapter: in.CreateAdapter,
 		})
+		return nil, out, err
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:  "set_vm_network_advanced",
+		Title: "Set a VM adapter's port features",
+		Description: "Change the per-port features of a virtual NIC: the security guards, bandwidth " +
+			"reservations and caps, hardware offloads, port mirroring, and trunk-mode VLAN.\n\n" +
+			"set_vm_network answers \"which network is this VM on\". This answers \"how does the " +
+			"switch treat its traffic\", which is a question you only reach once the first is settled.\n\n" +
+			"dhcp_guard and router_guard are the two worth knowing about by default: they stop a guest " +
+			"from handing out addresses or advertising itself as a router on a network it shares with " +
+			"real machines, which is exactly what a misconfigured test VM does to an office LAN.\n\n" +
+			"A trunk is what a guest firewall or router needs — it carries several VLANs to one " +
+			"adapter and lets the guest tag its own frames, where set_vm_network's vlan_id puts the " +
+			"adapter in a single VLAN and hides tagging entirely. The two are mutually exclusive " +
+			"modes on the same adapter.\n\n" +
+			"minimum_bandwidth_mbps and minimum_bandwidth_weight are two ways to reserve the same " +
+			"thing and a switch honours one or the other, so passing both is refused rather than " +
+			"quietly resolved.",
+		Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: ptr(false)},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setVMNetworkAdvancedInput) (*mcp.CallToolResult, *hyperv.VMSettings, error) {
+		out, err := d.VM.SetVMNetworkAdvanced(ctx, hyperv.AdapterFeatureOptions{
+			VMName:                 in.VMName,
+			AdapterName:            in.AdapterName,
+			DHCPGuard:              in.DHCPGuard,
+			RouterGuard:            in.RouterGuard,
+			PortMirroring:          in.PortMirroring,
+			DeviceNaming:           in.DeviceNaming,
+			AllowTeaming:           in.AllowTeaming,
+			VMQWeight:              in.VMQWeight,
+			IPsecOffloadMaxSA:      in.IPsecOffloadMaxSA,
+			MinimumBandwidthMbps:   in.MinimumBandwidthMbps,
+			MaximumBandwidthMbps:   in.MaximumBandwidthMbps,
+			MinimumBandwidthWeight: in.MinimumBandwidthWeight,
+			TrunkNativeVLANID:      in.TrunkNativeVLANID,
+			TrunkAllowedVLANIDs:    in.TrunkAllowedVLANIDs,
+		})
+		return nil, out, err
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:  "remove_vm_network_adapter",
+		Title: "Remove a VM network adapter",
+		Description: "Take a virtual NIC away from a VM. This is the counterpart to set_vm_network's " +
+			"create_adapter.\n\n" +
+			"Removing the last adapter is allowed: a VM with no network at all is a legitimate thing " +
+			"to want, and guest_invoke_command still reaches a Windows guest over the VMBus without " +
+			"one. A Generation 1 VM needs to be stopped first; a Generation 2 VM does not.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true)},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in removeVMNetworkAdapterInput) (*mcp.CallToolResult, *hyperv.VMSettings, error) {
+		out, err := d.VM.RemoveVMNetworkAdapter(ctx, in.VMName, in.AdapterName)
 		return nil, out, err
 	})
 

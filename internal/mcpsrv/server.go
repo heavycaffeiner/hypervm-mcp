@@ -52,6 +52,12 @@ leaves all three behind and this server stops recognising it — no credentials,
 pin, so the next connection is treated as a first sighting and a changed host key
 is trusted in silence. Use rename_vm, which carries them across.
 
+get_vm answers what a VM is; get_vm_settings answers how it is configured, and
+reads every property page in one call. Its output is the vocabulary every
+set_vm_* tool accepts, so what it reports can be sent straight back rather than
+guessed at — the boot order in particular reports a token per device that
+reorders it.
+
 Guest-facing tools split by where their mechanism lives, and the split decides
 which guests they work on. capture_vm_screen, send_vm_key and send_vm_mouse
 drive Hyper-V's own console devices, so they work whatever the guest runs — or
@@ -106,6 +112,7 @@ func New(version string, d *Deps) *mcp.Server {
 	})
 
 	registerVMTools(s, d)
+	registerSettingsTools(s, d)
 	registerCheckpointTools(s, d)
 	registerProvisionTools(s, d)
 	registerStorageTools(s, d)

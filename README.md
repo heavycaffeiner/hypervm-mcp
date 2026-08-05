@@ -212,6 +212,25 @@ created.
 </details>
 
 <details>
+<summary><b>VM settings</b></summary>
+
+`get_vm_settings` reads the whole configuration in one call, in the same vocabulary every setter accepts, so what it reports can be sent straight back.
+
+| Tool | |
+|---|---|
+| `get_vm_settings` | Everything on every property page, in one read |
+| `set_vm_memory` | Startup, dynamic range, buffer, priority, applied together |
+| `set_vm_processor` | Count, reserve, cap, weight, SMT visibility, migration compatibility |
+| `set_vm_firmware` | Boot order, secure boot template, console mode; Generation 1 BIOS too |
+| `set_vm_options` | Automatic start and stop, checkpoint policy, file locations, enhanced session |
+| `set_vm_integration_services` | The VMBus services other tools here depend on |
+| `set_vm_security` | A virtual TPM, which Windows 11 will not install without |
+| `set_vm_video` | Pin the console resolution `capture_vm_screen` photographs |
+| `set_vm_com_port` | A serial console over a named pipe, needing no guest network |
+| `set_vm_disk_settings` | Storage QoS in normalized IOPS, and controller placement |
+</details>
+
+<details>
 <summary><b>Provisioning and storage</b></summary>
 
 | Tool | |
@@ -236,6 +255,8 @@ created.
 | `list_switches` `create_switch` `delete_switch` | Virtual switches |
 | `set_switch_host_address` `set_switch_nat` | The host's side of an Internal switch |
 | `set_vm_network` | Switch, static MAC, VLAN, MAC spoofing, extra adapters |
+| `set_vm_network_advanced` | DHCP and router guard, bandwidth, offloads, mirroring, VLAN trunk |
+| `remove_vm_network_adapter` | Take an adapter away again |
 | `set_guest_static_ip` | A fixed address inside the guest |
 | `list_physical_adapters` `preflight_external_switch` | Before touching a physical NIC |
 | `diagnose_vm_network` | What can reach this VM, and what cannot |
@@ -567,6 +588,14 @@ when something does go wrong it is the only record of what the guest was showing
 <details>
 <summary><b>Implemented but never run</b></summary>
 
+- **The settings tools** — `get_vm_settings` and every `set_vm_*` alongside it,
+  plus `set_vm_network_advanced` and `remove_vm_network_adapter`. Their PowerShell
+  parses, and every property each one reads was checked against the Hyper-V
+  assembly's own type definitions, so no field name is a guess. What has not
+  happened is a run against a live hypervisor. `TestSettingsGeneration1` and
+  `TestSettingsGeneration2` build their own disposable VMs and assert each setting
+  by reading it back through the same vocabulary that wrote it; until those have
+  been run, treat this whole group as unproven.
 - **Creating or deleting an External switch.** Running it means disconnecting a
   working machine, so it is left for a deliberate session with console access. Its
   guards and preflight are tested; the creation is not.

@@ -362,6 +362,185 @@ func (c *Client) SetVMNetwork(ctx context.Context, o SetVMNetworkOptions) (*VMDe
 	return &out, nil
 }
 
+// requireAdapter resolves $P.adapter_name into $nic, defaulting to the VM's
+// first adapter. It expects $vm to be set.
+const requireAdapter = `
+    $nics = @(Get-VMNetworkAdapter -VM $vm)
+    if ($nics.Count -eq 0) {
+        throw "HVERR:ADAPTER_NOT_FOUND|'$($P.name)' has no network adapter"
+    }
+    if ($P.adapter_name) {
+        $nic = @($nics | Where-Object { $_.Name -eq $P.adapter_name })[0]
+        if (-not $nic) {
+            $have = @($nics | ForEach-Object { $_.Name }) -join ', '
+            throw "HVERR:ADAPTER_NOT_FOUND|'$($P.name)' has no adapter named '$($P.adapter_name)' (has: $have)"
+        }
+    } else {
+        $nic = $nics[0]
+    }
+`
+
+// SetVMNetworkAdvanced changes the per-port features of a virtual NIC.
+//
+// These are the settings on a Hyper-V adapter that SetVMNetwork leaves alone:
+// the security guards, bandwidth reservations, offloads, port mirroring, and
+// trunk-mode VLAN. They are separate because the questions differ. SetVMNetwork
+// answers "which network is this VM on"; this answers "how does the switch treat
+// its traffic", which is a question you only reach once the first is settled.
+func (c *Client) SetVMNetworkAdvanced(ctx context.Context, o AdapterFeatureOptions) (*VMSettings, error) {
+	if o.VMName == "" {
+		return nil, hverr.New(hverr.InvalidArgument, "vm_name is required")
+	}
+
+	switch strings.ToLower(o.PortMirroring) {
+	case "":
+	case "none":
+		o.PortMirroring = "None"
+	case "source":
+		o.PortMirroring = "Source"
+	case "destination":
+		o.PortMirroring = "Destination"
+	default:
+		return nil, hverr.New(hverr.InvalidArgument,
+			`port_mirroring must be "None", "Source" or "Destination", got %q`, o.PortMirroring)
+	}
+
+	for _, f := range []struct {
+		label string
+		v     *int
+		max   int
+	}{
+		{"vmq_weight", o.VMQWeight, 100},
+		{"minimum_bandwidth_weight", o.MinimumBandwidthWeight, 100},
+	} {
+		if f.v != nil && (*f.v < 0 || *f.v > f.max) {
+			return nil, hverr.New(hverr.InvalidArgument, "%s must be between 0 and %d", f.label, f.max)
+		}
+	}
+	for _, f := range []struct {
+		label string
+		v     *int
+	}{
+		{"ipsec_offload_max_sa", o.IPsecOffloadMaxSA},
+		{"minimum_bandwidth_mbps", o.MinimumBandwidthMbps},
+		{"maximum_bandwidth_mbps", o.MaximumBandwidthMbps},
+	} {
+		if f.v != nil && *f.v < 0 {
+			return nil, hverr.New(hverr.InvalidArgument, "%s cannot be negative", f.label)
+		}
+	}
+	// Hyper-V accepts both and then enforces neither predictably, so the choice
+	// is made here instead of being discovered later.
+	if o.MinimumBandwidthMbps != nil && *o.MinimumBandwidthMbps > 0 &&
+		o.MinimumBandwidthWeight != nil && *o.MinimumBandwidthWeight > 0 {
+		return nil, hverr.New(hverr.InvalidArgument,
+			"minimum_bandwidth_mbps and minimum_bandwidth_weight are two ways to reserve the "+
+				"same thing; a switch honours one or the other, so set just one")
+	}
+	if o.MinimumBandwidthMbps != nil && o.MaximumBandwidthMbps != nil &&
+		*o.MaximumBandwidthMbps > 0 && *o.MinimumBandwidthMbps > *o.MaximumBandwidthMbps {
+		return nil, hverr.New(hverr.InvalidArgument,
+			"minimum_bandwidth_mbps (%d) is above maximum_bandwidth_mbps (%d)",
+			*o.MinimumBandwidthMbps, *o.MaximumBandwidthMbps)
+	}
+
+	if o.TrunkNativeVLANID != nil && (*o.TrunkNativeVLANID < 0 || *o.TrunkNativeVLANID > 4094) {
+		return nil, hverr.New(hverr.InvalidArgument, "trunk_native_vlan_id must be between 0 and 4094")
+	}
+	for _, id := range o.TrunkAllowedVLANIDs {
+		if id < 1 || id > 4094 {
+			return nil, hverr.New(hverr.InvalidArgument,
+				"trunk_allowed_vlan_ids entry %d must be between 1 and 4094", id)
+		}
+	}
+	if (o.TrunkNativeVLANID != nil) != (len(o.TrunkAllowedVLANIDs) > 0) {
+		return nil, hverr.New(hverr.InvalidArgument,
+			"trunk_native_vlan_id and trunk_allowed_vlan_ids define one trunk together; give both")
+	}
+
+	// A nil slice would reach PowerShell as null, which pipes as one element
+	// rather than none.
+	if o.TrunkAllowedVLANIDs == nil {
+		o.TrunkAllowedVLANIDs = []int{}
+	}
+	args := map[string]any{
+		"name":          o.VMName,
+		"adapter_name":  o.AdapterName,
+		"mirroring":     o.PortMirroring,
+		"trunk_allowed": o.TrunkAllowedVLANIDs,
+		"set_trunk":     o.TrunkNativeVLANID != nil,
+		"trunk_native":  0,
+	}
+	if o.TrunkNativeVLANID != nil {
+		args["trunk_native"] = *o.TrunkNativeVLANID
+	}
+	setBool(args, "dhcp_guard", o.DHCPGuard)
+	setBool(args, "router_guard", o.RouterGuard)
+	setBool(args, "device_naming", o.DeviceNaming)
+	setBool(args, "teaming", o.AllowTeaming)
+	setInt(args, "vmq", o.VMQWeight)
+	setInt(args, "ipsec", o.IPsecOffloadMaxSA)
+	setInt(args, "min_bw", o.MinimumBandwidthMbps)
+	setInt(args, "max_bw", o.MaximumBandwidthMbps)
+	setInt(args, "min_weight", o.MinimumBandwidthWeight)
+
+	const script = requireVM + requireAdapter + `
+    $a = @{ VMNetworkAdapter = $nic }
+    if ($P.set_dhcp_guard)    { $a['DhcpGuard']     = $(if ($P.dhcp_guard)    { 'On' } else { 'Off' }) }
+    if ($P.set_router_guard)  { $a['RouterGuard']   = $(if ($P.router_guard)  { 'On' } else { 'Off' }) }
+    if ($P.set_device_naming) { $a['DeviceNaming']  = $(if ($P.device_naming) { 'On' } else { 'Off' }) }
+    if ($P.set_teaming)       { $a['AllowTeaming']  = $(if ($P.teaming)       { 'On' } else { 'Off' }) }
+    if ($P.mirroring)         { $a['PortMirroring'] = $P.mirroring }
+    if ($P.set_vmq)           { $a['VmqWeight']     = [int]$P.vmq }
+    if ($P.set_ipsec)         { $a['IPsecOffloadMaximumSecurityAssociation'] = [int]$P.ipsec }
+    # Hyper-V takes these in bits per second.
+    if ($P.set_min_bw)        { $a['MinimumBandwidthAbsolute'] = [int64]$P.min_bw * 1000000 }
+    if ($P.set_max_bw)        { $a['MaximumBandwidth']         = [int64]$P.max_bw * 1000000 }
+    if ($P.set_min_weight)    { $a['MinimumBandwidthWeight']   = [int]$P.min_weight }
+
+    if ($a.Count -gt 1) { Set-VMNetworkAdapter @a | Out-Null }
+
+    if ($P.set_trunk) {
+        $allowed = @($P.trunk_allowed | ForEach-Object { [int]$_ })
+        Set-VMNetworkAdapterVlan -VMNetworkAdapter $nic -Trunk -NativeVlanId ([int]$P.trunk_native) -AllowedVlanIdList $allowed | Out-Null
+    } elseif ($a.Count -le 1) {
+        throw "HVERR:INVALID_ARGUMENT|nothing to change; pass at least one adapter feature"
+    }
+` + settingsProjection
+
+	var out VMSettings
+	if err := c.r.RunTimeoutInto(ctx, 2*time.Minute, script, args, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RemoveVMNetworkAdapter takes a virtual NIC away from a VM.
+//
+// This is the counterpart to SetVMNetwork's create_adapter. Removing the last
+// adapter is allowed: a VM with no network at all is a legitimate thing to want,
+// and guest_invoke_command still reaches a Windows guest without one.
+func (c *Client) RemoveVMNetworkAdapter(ctx context.Context, vmName, adapterName string) (*VMSettings, error) {
+	if vmName == "" {
+		return nil, hverr.New(hverr.InvalidArgument, "vm_name is required")
+	}
+	if adapterName == "" {
+		return nil, hverr.New(hverr.InvalidArgument,
+			"adapter_name is required; removing an unnamed adapter would be a guess at which one")
+	}
+
+	const script = requireVM + requireAdapter + `
+    Remove-VMNetworkAdapter -VMNetworkAdapter $nic | Out-Null
+` + settingsProjection
+
+	var out VMSettings
+	if err := c.r.RunTimeoutInto(ctx, 2*time.Minute, script,
+		map[string]any{"name": vmName, "adapter_name": adapterName}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // normalizeMAC accepts the bare 12-hex form Hyper-V reports and turns it into
 // something net.ParseMAC understands.
 func normalizeMAC(s string) string {
