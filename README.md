@@ -1,12 +1,14 @@
 # hypervm-mcp
 
-**Drive Hyper-V from an AI coding agent — without a UAC prompt every time.**
+**Drive Hyper-V from an AI coding agent, without a UAC prompt every time.**
 
 [![CI](https://github.com/heavycaffeiner/hypervm-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/heavycaffeiner/hypervm-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+**English** | [한국어](README.ko.md)
+
 Every Hyper-V cmdlet needs administrator rights. Ask an agent to spin up a test
-VM and you get an elevation prompt — then another, and another. So you either
+VM and you get an elevation prompt, then another, and another. So you either
 click all day or run your agent elevated, which is worse.
 
 This moves the privilege instead of asking for it. A small Windows service holds
@@ -17,26 +19,112 @@ account can open. **One UAC prompt at install, and never again.**
 create a Rocky Linux VM, install nginx, and show me its page
 ```
 
-…is a thing you can now say, and the agent has the 50-odd tools to do it: create
-the VM, install unattended, run commands inside it, forward a port out, and take
-a picture of its screen if something goes wrong.
+That is a thing you can now say, and the agent has the 50-odd tools to do it:
+create the VM, install unattended, run commands inside it, forward a port out,
+and take a picture of its screen if something goes wrong.
+
+---
+
+## What this is
+
+New here? Two minutes of vocabulary, then you can skip the rest of this section
+forever.
+
+**Hyper-V** is the virtual machine engine built into Windows Pro and Windows
+Server. It runs a whole other operating system (Linux, another Windows) in a box
+on your machine.
+
+**MCP**, the Model Context Protocol, is the standard way an AI agent such as
+Claude Code is given tools it can call. An MCP server publishes a list of tools;
+the agent decides when to use them and what to pass.
+
+**hypervm-mcp** is an MCP server for Hyper-V. After installing it once, you ask
+your agent for what you want in ordinary language and it does the Hyper-V work:
+
+| You say | The agent calls |
+|---|---|
+| "make me an Ubuntu box with 8 GB of RAM" | `create_vm`, `create_seed_disk`, `start_vm` |
+| "is it up yet?" | `wait_for_guest_ip`, `get_vm` |
+| "install nginx on it" | `ssh_exec` |
+| "let me open it in my browser" | `open_tunnel` |
+| "it's stuck, what's on screen?" | `capture_vm_screen` |
+| "snapshot it before I break something" | `create_checkpoint` |
+
+You never call these yourself. They are listed throughout this README so you can
+see what your agent is doing and tell it to do something more specific.
+
+<details>
+<summary><b>Words you will run into</b></summary>
+
+| | |
+|---|---|
+| **Host** | Your physical Windows machine, the one running Hyper-V. |
+| **Guest** | The operating system running inside a VM. |
+| **Generation 1 / 2** | Hyper-V's two VM shapes. Gen 2 is UEFI and modern; Gen 1 is legacy BIOS, for old operating systems. Use Gen 2 unless something forces you not to. |
+| **VHD / VHDX** | A virtual hard disk: one file on your host that the guest sees as a drive. |
+| **Checkpoint** | A snapshot of a VM you can revert to. Hyper-V's name for it. |
+| **Virtual switch** | A virtual network cable. *Default Switch* comes with Windows and just works; *Internal* connects host and guests only; *Private* connects guests only; *External* puts the guest on your real LAN. |
+| **NAT** | Address translation, the thing that lets a guest on a private network reach the internet. |
+| **UAC** | The Windows "do you want to allow this app to make changes" prompt. |
+| **Windows service** | A background program Windows starts on boot, able to run with more rights than you have. |
+| **Named pipe** | A local channel between two programs on the same machine, with Windows deciding who is allowed to open it. |
+| **VMBus** | Hyper-V's private channel between host and guest. It does not use the network, so it works even when the guest has no network at all. |
+| **PowerShell Direct** | Running PowerShell inside a Windows guest over the VMBus. No network, no SSH, no open ports. |
+| **Integration services** | Small drivers and daemons inside the guest that let the host see and do more. Windows ships them; Linux needs `hyperv-daemons`. |
+| **Unattended install / answer file** | A file the operating system installer reads so nobody has to click through setup. `autounattend.xml` on Windows, a kickstart file on Rocky or RHEL. |
+| **Tunnel** | A port on your host forwarded into a guest, so `localhost:8080` reaches the guest's web server. |
+| **Tailscale / tailnet** | A private network across your own machines. Optional here, used for reaching a VM from your laptop. |
+
+</details>
+
+---
+
+## Contents
+
+- [Install](#install)
+- [Your first VM](#your-first-vm)
+- [The three ways to reach a service](#the-three-ways-to-reach-a-service)
+- [Things that will bite you](#things-that-will-bite-you)
+- [Tools](#tools)
+- [Testing Windows software in a VM](#testing-windows-software-in-a-vm)
+- [Operating it](#operating-it)
+- [How it works](#how-it-works)
+- [What is verified](#what-is-verified)
 
 ---
 
 ## Install
 
+You need, before anything else:
+
+- **Windows 10/11 Pro, Enterprise or Education, or Windows Server.** Home
+  editions have no Hyper-V.
+- **Hyper-V turned on.** Not sure? Run
+  `Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V` in
+  PowerShell. If it says `Disabled`, enable Hyper-V from *Turn Windows features
+  on or off* and reboot.
+- **PowerShell 5.1**, which every supported Windows already has.
+- **An MCP client**, such as Claude Code.
+
+Then, in PowerShell:
+
 ```powershell
 irm https://raw.githubusercontent.com/heavycaffeiner/hypervm-mcp/main/install.ps1 | iex
 ```
 
-Downloads the latest release, verifies its checksum, installs the service, and
-registers itself with Claude Code if it finds it. Then:
+This downloads the latest release, verifies its checksum, installs the service
+(one UAC prompt, here), and registers itself with Claude Code if it finds it.
+
+Check it worked:
 
 ```powershell
 hypervm-mcp doctor
 ```
 
-**Needs** Windows 10/11 Pro or Server with Hyper-V enabled, and PowerShell 5.1.
+`doctor` inspects Hyper-V, the service, the pipe, storage paths, switches,
+credentials and tunnels, and tells you what to fix if anything is off. Restart
+your MCP client afterwards so it picks up the new server, then ask your agent to
+list your VMs.
 
 To upgrade later:
 
@@ -62,7 +150,7 @@ claude mcp add hypervm-mcp -s user -- "$env:ProgramData\hypervm-mcp\bin\hypervm-
 By hand: download `hypervm-mcp.exe` from a release, check it against
 `hypervm-mcp.exe.sha256`, run `hypervm-mcp.exe service install`.
 
-Per-workspace instead of globally — put this in `.mcp.json`:
+Per-workspace instead of globally, put this in `.mcp.json`:
 
 ```json
 {
@@ -82,6 +170,13 @@ Per-workspace instead of globally — put this in `.mcp.json`:
 
 A worked example, in the order the tools are meant to be used.
 
+> [!NOTE]
+> **You do not type the boxes below.** You ask in plain language, and the agent
+> works out the call. The boxes show what your request turns into, so you can
+> recognise it and ask for something more specific. Blocks that start with
+> `hypervm-mcp` are the exception: those are real commands you run yourself in
+> PowerShell.
+
 **1. Make it.** `create_vm` takes separate paths for the configuration, the disk,
 the checkpoints and the paging file, so nothing has to land on your system drive.
 
@@ -91,16 +186,16 @@ create_vm  name=dev-box  generation=2  memory_mb=4096  vhd_size_mb=32768
 ```
 
 **2. Install it without watching.** `create_seed_disk` writes an answer file to a
-small disk the installer finds by itself — a kickstart on an `OEMDRV`-labelled
+small disk the installer finds by itself: a kickstart on an `OEMDRV`-labelled
 disk for Linux, or `autounattend.xml` on an ISO for Windows. No console, no
 keyboard.
 
 **3. Get in.** Two ways, and they are good at different things:
 
-- `ssh_exec` — any guest OS, once it has an address and a running sshd.
-- `guest_invoke_command` — Windows guests only, but over the VMBus, so it works
-  with **no guest network at all**. This is how you bootstrap a guest that cannot
-  be reached yet.
+- `ssh_exec` runs on any guest OS, once it has an address and a running sshd.
+- `guest_invoke_command` is Windows guests only, but it goes over the VMBus, so
+  it works with **no guest network at all**. This is how you bootstrap a guest
+  that cannot be reached yet.
 
 Store the credentials once and neither needs them again:
 
@@ -109,8 +204,8 @@ hypervm-mcp cred set --vm dev-box --user dev --ssh-key ~\.ssh\id_ed25519
 ```
 
 **4. Reach a service inside it.** `open_tunnel` forwards a host port into the
-guest. Use `mode=ssh` when the service is bound to the guest's own `127.0.0.1` —
-nothing else can reach that.
+guest. Use `mode=ssh` when the service is bound to the guest's own `127.0.0.1`,
+because nothing else can reach that.
 
 ```
 open_tunnel  vm_name=dev-box  guest_port=80  mode=ssh  bind_scope=loopback
@@ -122,25 +217,27 @@ a new address.
 
 **5. When something goes wrong, look.** `capture_vm_screen` photographs the
 console from the host side. It needs no agent, no network and no operating
-system — so it works on a firmware prompt, a boot menu or a stop error, exactly
+system, so it works on a firmware prompt, a boot menu or a stop error, exactly
 when nothing else can tell you anything.
 
 ---
 
 ## The three ways to reach a service
 
-Getting this wrong wastes an afternoon, so the tools say which applies.
+Your VM is running something (a web server, a database, a remote desktop) and you
+want to use it. There are three routes in, and picking the wrong one wastes an
+afternoon, so the tools say which applies.
 
 | | When |
 |---|---|
 | **Connect directly** to the guest's address | Binds no host port, so what the host is already listening on is irrelevant. Guest SMB on 445 works this way over the Default Switch. |
-| **A tunnel** forwards a host port in | Anything whose client can be pointed at a port. `mode=ssh` reaches services on the guest's own loopback; `bind_scope` decides who may connect — this host, your tailnet, or everything. |
+| **A tunnel** forwards a host port in | Anything whose client can be pointed at a port. `mode=ssh` reaches services on the guest's own loopback; `bind_scope` decides who may connect: this host, your tailnet, or everything. |
 | **An External switch** gives the guest its own LAN address | Only when *other machines* must reach it, or the host already holds the port (SMB, RDP, WinRM), or the protocol cares about host identity. |
 
 > [!CAUTION]
 > **Creating an External switch is the one thing here that can break your
 > machine.** Hyper-V rebinds the physical adapter, dropping host networking for
-> several seconds — and a static address that fails to migrate leaves the host
+> several seconds, and a static address that fails to migrate leaves the host
 > unreachable except from the console.
 >
 > `create_switch` refuses until `confirm_disruption` is set, and the refusal
@@ -149,7 +246,7 @@ Getting this wrong wastes an afternoon, so the tools say which applies.
 > truly bridge anyway, and what happens to Tailscale.
 > `preflight_external_switch` shows the same report and changes nothing.
 >
-> **This path is unverified** — see [What is verified](#what-is-verified).
+> **This path is unverified.** See [What is verified](#what-is-verified).
 
 ---
 
@@ -157,7 +254,7 @@ Getting this wrong wastes an afternoon, so the tools say which applies.
 
 **A VM's name is an identity here, not a label.** Credentials, the pinned SSH
 host key and every tunnel are filed under it. Rename a VM in Hyper-V Manager and
-this server stops recognising it — no credentials, no pin (so the next connection
+this server stops recognising it: no credentials, no pin (so the next connection
 looks like a first sighting and a changed key is trusted in silence), and tunnels
 that fail the next time they look the guest up. Use `rename_vm`, which carries all
 three across. It does not rename files on disk: the folder, the disks and the
@@ -195,6 +292,10 @@ created.
 ---
 
 ## Tools
+
+Around fifty of them. You do not need to memorise any: your agent picks. Skim the
+groups so you know what is possible, and open one when you want to ask for
+something by name.
 
 <details>
 <summary><b>Lifecycle and checkpoints</b></summary>
@@ -269,7 +370,7 @@ created.
 |---|---|
 | `ssh_exec` `ssh_info` `ssh_forget_host_key` | Commands over SSH, host keys pinned per VM |
 | `guest_invoke_command` `guest_copy_file` | Over the VMBus, with no guest network at all |
-| `guest_run_in_session` | On the guest's desktop, elevated — where windows are drawn |
+| `guest_run_in_session` | On the guest's desktop, elevated, where windows are drawn |
 | `capture_vm_screen` | A picture of the console, needing nothing inside the guest |
 | `send_vm_key` `send_vm_mouse` | The console's own keyboard and pointer |
 | `get_guest_network` | Adapters and reported addresses |
@@ -297,12 +398,12 @@ guest_invoke_command  vm_name=win-test
 ```
 
 **Use the built-in Administrator.** It is the one local account never subject to
-token filtering. Another local admin may come back with a filtered token — which
+token filtering. Another local admin may come back with a filtered token, which
 looks like a member of the group right up until something needs the privilege. If
 you must use one, set `LocalAccountTokenFilterPolicy` to 1 in the guest, or go
 through `guest_run_in_session`, which asks for the highest run level explicitly.
 
-**Elevation is not the hard part — the session is.** `guest_invoke_command` runs
+**Elevation is not the hard part, the session is.** `guest_invoke_command` runs
 in session 0, which has no desktop. A console program does not care. A program
 that opens a window will be drawn nowhere at all.
 </details>
@@ -314,7 +415,7 @@ Four separate problems:
 
 **Somewhere to draw.** Desktop Experience, not Server Core, and automatic logon so
 an interactive session exists and survives reboots. Turn off the lock screen,
-screen saver and display power-down — a blanked screen captures as black and takes
+screen saver and display power-down: a blanked screen captures as black and takes
 no clicks, which reads as a broken test rather than a sleeping desktop. The answer
 file in `internal/e2e` does all of this.
 
@@ -349,14 +450,14 @@ so how far they generalise depends on how much of the guest each one needs.
 | | Needs from the guest | Run against |
 |---|---|---|
 | `capture_vm_screen` | Nothing at all | Windows, Linux, firmware with no OS |
-| `send_vm_key` | Something listening — firmware counts | Windows, Linux, firmware with no OS |
+| `send_vm_key` | Something listening, firmware counts | Windows, Linux, firmware with no OS |
 | `send_vm_mouse` | A bound pointer, which firmware has not | Windows, Linux |
 | `guest_invoke_command` | PowerShell Direct | Windows only; use `ssh_exec` on Linux |
 | `guest_run_in_session` | PowerShell Direct and a desktop | Windows only |
 | `guest_copy_file` | The Guest Service Interface | Both; Linux needs `hypervfcopyd` |
 
 Give no `width`/`height` to `capture_vm_screen` and it uses the console's own
-resolution, the only size always accepted — a Generation 1 firmware screen is
+resolution, the only size always accepted. A Generation 1 firmware screen is
 640x480-ish, nowhere near a plausible default.
 
 The pointer is a synthetic device on Generation 2 VMs and an emulated PS/2 one on
@@ -389,7 +490,7 @@ ends run as different accounts: the CLI is you, and only the service can write i
 own data directory.
 
 SSH host keys are pinned per VM name on first connect. A later mismatch fails
-until you pass `trust_new_key` — the expected path after rebuilding a VM. Keying
+until you pass `trust_new_key`, the expected path after rebuilding a VM. Keying
 on the name rather than the address is deliberate: an address-keyed store would
 see a new host after every reboot and pin nothing.
 </details>
@@ -424,7 +525,7 @@ get full control, the installing user read-only. The binary lives here rather th
 in your build tree because anything writable by a non-admin that a LocalSystem
 service executes is a privilege escalation.
 
-Run `hypervm-mcp doctor` first — it checks Hyper-V, the pipe, storage paths,
+Run `hypervm-mcp doctor` first. It checks Hyper-V, the pipe, storage paths,
 switches, credentials, Tailscale and every open tunnel, and says what to do.
 
 | Symptom | |
@@ -462,7 +563,7 @@ terminating.
 **Projections build hashtables, never `Select-Object` calculated properties.**
 Select-Object flattens its expression's output: an array of one becomes a scalar
 and an empty one becomes `{}`. Both decode wrongly, and the one-element case is
-the common one — a VM usually has exactly one IP address.
+the common one, since a VM usually has exactly one IP address.
 
 **Nothing depends on the host's display language.** Hyper-V localizes its
 messages, so "VM not found" arrives in Korean on a Korean Windows. Outcomes are
@@ -493,7 +594,7 @@ go build -ldflags "-X github.com/heavycaffeiner/hypervm-mcp/internal/config.inst
 | MCP server name | `hypervm-mcp` | `hypervm-mcp-dev` |
 
 Release builds pass no flag, so their names are unchanged. Credentials and pinned
-host keys do not carry over — the dev instance starts empty, which is the point.
+host keys do not carry over: the dev instance starts empty, which is the point.
 
 **Hyper-V itself is not isolated.** Both instances drive the same hypervisor and
 see the same virtual machines. Keeping their VM names apart is still up to you.
@@ -578,7 +679,7 @@ With **no guest at all**:
 | Both firmware families | UEFI boot order set by device token on Generation 2; the BIOS permutation completed from one named class on Generation 1, with secure boot and a vTPM refused there for the right reason |
 
 And `rename_vm`: credentials and the pinned host key both confirmed under the new
-name — the key by comparing fingerprints, because a lost pin is silent and would
+name, the key by comparing fingerprints, because a lost pin is silent and would
 otherwise look identical to a carried one.
 
 The answer file deliberately does not install OpenSSH. Putting sshd there would
@@ -600,7 +701,7 @@ when something does go wrong it is the only record of what the guest was showing
   flags as false, so there is no preflight worth trusting to offer.
 - **Guests other than the two above.** Other Windows versions and Linux
   distributions should work by construction, since the guest-side requirement is
-  only a driver both families ship in-tree — but that is an expectation, not a
+  only a driver both families ship in-tree, but that is an expectation, not a
   measurement.
 </details>
 
@@ -610,8 +711,8 @@ when something does go wrong it is the only record of what the guest was showing
 - `guest_copy_file` cannot work on Linux 6.10 or later, which removed the
   `/dev/vmbus/hv_fcopy` device `hypervfcopyd` attaches to. The daemon still
   reports itself active. The error says so and points at `ssh_exec`.
-- Rocky 10 ships no X server — RHEL 10 dropped it — so the Linux GUI tests run a
-  Wayland compositor, and read the pointer from the kernel input device because
+- Rocky 10 ships no X server, since RHEL 10 dropped it, so the Linux GUI tests run
+  a Wayland compositor, and read the pointer from the kernel input device because
   Wayland will not tell a client where it is.
 </details>
 
